@@ -920,6 +920,11 @@ class DataSetConfig(BaseSettings):
         default=True,
     )
 
+    DATASET_MAX_SEGMENTS_PER_REQUEST: NonNegativeInt = Field(
+        description="Maximum number of segments for dataset segments API (0 for unlimited)",
+        default=0,
+    )
+
 
 class WorkspaceConfig(BaseSettings):
     """
@@ -1112,9 +1117,9 @@ class SwaggerUIConfig(BaseSettings):
     )
 
 
-class TenantSelfTaskQueueConfig(BaseSettings):
-    TENANT_SELF_TASK_QUEUE_PULL_SIZE: int = Field(
-        description="Default batch size for tenant self task queue pull operations",
+class TenantIsolatedTaskQueueConfig(BaseSettings):
+    TENANT_ISOLATED_TASK_CONCURRENCY: int = Field(
+        description="Number of tasks allowed to be delivered concurrently from isolated queue per tenant",
         default=1,
     )
 
@@ -1143,7 +1148,7 @@ class FeatureConfig(
     RagEtlConfig,
     RepositoryConfig,
     SecurityConfig,
-    TenantSelfTaskQueueConfig,
+    TenantIsolatedTaskQueueConfig,
     ToolConfig,
     UpdateConfig,
     WorkflowConfig,

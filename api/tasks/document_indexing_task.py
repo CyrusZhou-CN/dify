@@ -1,6 +1,6 @@
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import click
 from celery import shared_task
@@ -8,7 +8,8 @@ from celery import shared_task
 from configs import dify_config
 from core.entities.document_task import DocumentTask
 from core.indexing_runner import DocumentIsPausedError, IndexingRunner
-from core.rag.pipeline.queue import TenantSelfTaskQueue
+from core.rag.pipeline.queue import TenantIsolatedTaskQueue
+from enums.cloud_plan import CloudPlan
 from extensions.ext_database import db
 from libs.datetime_utils import naive_utc_now
 from models.dataset import Dataset, Document
@@ -34,7 +35,7 @@ def document_indexing_task(dataset_id: str, document_ids: list):
     _document_indexing(dataset_id, document_ids)
 
 
-def _document_indexing(dataset_id: str, document_ids: list):
+def _document_indexing(dataset_id: str, document_ids: Sequence[str]):
     """
     Process document for tasks
     :param dataset_id:
@@ -57,7 +58,7 @@ def _document_indexing(dataset_id: str, document_ids: list):
             vector_space = features.vector_space
             count = len(document_ids)
             batch_upload_limit = int(dify_config.BATCH_UPLOAD_LIMIT)
-            if features.billing.subscription.plan == "sandbox" and count > 1:
+            if features.billing.subscription.plan == CloudPlan.SANDBOX and count > 1:
                 raise ValueError("Your current plan does not support batch upload, please upgrade your plan.")
             if count > batch_upload_limit:
                 raise ValueError(f"You have reached the batch upload limit of {batch_upload_limit}.")
@@ -107,17 +108,19 @@ def _document_indexing(dataset_id: str, document_ids: list):
         db.session.close()
 
 
-def _document_indexing_with_tenant_queue(tenant_id: str, dataset_id: str, document_ids: list, task_func: Callable):
+def _document_indexing_with_tenant_queue(
+    tenant_id: str, dataset_id: str, document_ids: Sequence[str], task_func: Callable[[str, str, Sequence[str]], None]
+):
     try:
         _document_indexing(dataset_id, document_ids)
     except Exception:
         logger.exception("Error processing document indexing %s for tenant %s: %s", dataset_id, tenant_id)
     finally:
-        tenant_self_task_queue = TenantSelfTaskQueue(tenant_id, "document_indexing")
+        tenant_self_task_queue = TenantIsolatedTaskQueue(tenant_id, "document_indexing")
 
         # Check if there are waiting tasks in the queue
         # Use rpop to get the next task from the queue (FIFO order)
-        next_tasks = tenant_self_task_queue.pull_tasks(count=dify_config.TENANT_SELF_TASK_QUEUE_PULL_SIZE)
+        next_tasks = tenant_self_task_queue.pull_tasks(count=dify_config.TENANT_ISOLATED_TASK_CONCURRENCY)
 
         logger.info("document indexing tenant isolation queue next tasks: %s", next_tasks)
 
@@ -138,7 +141,7 @@ def _document_indexing_with_tenant_queue(tenant_id: str, dataset_id: str, docume
 
 
 @shared_task(queue="dataset")
-def normal_document_indexing_task(tenant_id: str, dataset_id: str, document_ids: list):
+def normal_document_indexing_task(tenant_id: str, dataset_id: str, document_ids: Sequence[str]):
     """
     Async process document
     :param tenant_id:
@@ -152,7 +155,7 @@ def normal_document_indexing_task(tenant_id: str, dataset_id: str, document_ids:
 
 
 @shared_task(queue="priority_dataset")
-def priority_document_indexing_task(tenant_id: str, dataset_id: str, document_ids: list):
+def priority_document_indexing_task(tenant_id: str, dataset_id: str, document_ids: Sequence[str]):
     """
     Priority async process document
     :param tenant_id:

@@ -5,6 +5,7 @@ import pytest
 from faker import Faker
 
 from core.entities.document_task import DocumentTask
+from enums.cloud_plan import CloudPlan
 from extensions.ext_database import db
 from models import Account, Tenant, TenantAccountJoin, TenantAccountRole
 from models.dataset import Dataset, Document
@@ -213,7 +214,7 @@ class TestDocumentIndexingTasks:
         # Configure billing features
         mock_external_service_dependencies["features"].billing.enabled = billing_enabled
         if billing_enabled:
-            mock_external_service_dependencies["features"].billing.subscription.plan = "sandbox"
+            mock_external_service_dependencies["features"].billing.subscription.plan = CloudPlan.SANDBOX
             mock_external_service_dependencies["features"].vector_space.limit = 100
             mock_external_service_dependencies["features"].vector_space.size = 50
 
@@ -462,7 +463,7 @@ class TestDocumentIndexingTasks:
         )
 
         # Configure sandbox plan with batch limit
-        mock_external_service_dependencies["features"].billing.subscription.plan = "sandbox"
+        mock_external_service_dependencies["features"].billing.subscription.plan = CloudPlan.SANDBOX
 
         # Create more documents than sandbox plan allows (limit is 1)
         fake = Faker()
@@ -718,11 +719,11 @@ class TestDocumentIndexingTasks:
 
         mock_task_func = MagicMock()
 
-        # Use real Redis for TenantSelfTaskQueue
-        from core.rag.pipeline.queue import TenantSelfTaskQueue
+        # Use real Redis for TenantIsolatedTaskQueue
+        from core.rag.pipeline.queue import TenantIsolatedTaskQueue
 
         # Create real queue instance
-        queue = TenantSelfTaskQueue(tenant_id, "document_indexing")
+        queue = TenantIsolatedTaskQueue(tenant_id, "document_indexing")
 
         # Add waiting tasks to the real Redis queue
         waiting_tasks = [
@@ -780,11 +781,11 @@ class TestDocumentIndexingTasks:
 
         mock_task_func = MagicMock()
 
-        # Use real Redis for TenantSelfTaskQueue
-        from core.rag.pipeline.queue import TenantSelfTaskQueue
+        # Use real Redis for TenantIsolatedTaskQueue
+        from core.rag.pipeline.queue import TenantIsolatedTaskQueue
 
         # Create real queue instance
-        queue = TenantSelfTaskQueue(tenant_id, "document_indexing")
+        queue = TenantIsolatedTaskQueue(tenant_id, "document_indexing")
 
         # Add waiting task to the real Redis queue
         waiting_task = DocumentTask(tenant_id=tenant_id, dataset_id=dataset.id, document_ids=["waiting-doc-1"])
@@ -847,12 +848,12 @@ class TestDocumentIndexingTasks:
 
         mock_task_func = MagicMock()
 
-        # Use real Redis for TenantSelfTaskQueue
-        from core.rag.pipeline.queue import TenantSelfTaskQueue
+        # Use real Redis for TenantIsolatedTaskQueue
+        from core.rag.pipeline.queue import TenantIsolatedTaskQueue
 
         # Create queue instances for both tenants
-        queue1 = TenantSelfTaskQueue(tenant1_id, "document_indexing")
-        queue2 = TenantSelfTaskQueue(tenant2_id, "document_indexing")
+        queue1 = TenantIsolatedTaskQueue(tenant1_id, "document_indexing")
+        queue2 = TenantIsolatedTaskQueue(tenant2_id, "document_indexing")
 
         # Add waiting tasks to both queues
         waiting_task1 = DocumentTask(tenant_id=tenant1_id, dataset_id=dataset1.id, document_ids=["tenant1-doc-1"])
@@ -882,5 +883,5 @@ class TestDocumentIndexingTasks:
         assert len(remaining_tasks2) == 1
 
         # Verify queue keys are different
-        assert queue1.queue != queue2.queue
-        assert queue1.task_key != queue2.task_key
+        assert queue1._queue != queue2._queue
+        assert queue1._task_key != queue2._task_key
