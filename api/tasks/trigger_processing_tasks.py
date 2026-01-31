@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.app.entities.app_invoke_entities import InvokeFrom
+from core.db.session_factory import session_factory
 from core.plugin.entities.plugin_daemon import CredentialType
 from core.plugin.entities.request import TriggerInvokeEventResponse
 from core.plugin.impl.exc import PluginInvokeError
@@ -26,14 +27,21 @@ from core.trigger.provider import PluginTriggerProviderController
 from core.trigger.trigger_manager import TriggerManager
 from core.workflow.enums import NodeType, WorkflowExecutionStatus
 from core.workflow.nodes.trigger_plugin.entities import TriggerEventNodeData
-from extensions.ext_database import db
-from models.enums import AppTriggerType, CreatorUserRole, WorkflowRunTriggeredFrom, WorkflowTriggerStatus
+from enums.quota_type import QuotaType, unlimited
+from models.enums import (
+    AppTriggerType,
+    CreatorUserRole,
+    WorkflowRunTriggeredFrom,
+    WorkflowTriggerStatus,
+)
 from models.model import EndUser
 from models.provider_ids import TriggerProviderID
 from models.trigger import TriggerSubscription, WorkflowPluginTrigger, WorkflowTriggerLog
 from models.workflow import Workflow, WorkflowAppLog, WorkflowAppLogCreatedFrom, WorkflowRun
 from services.async_workflow_service import AsyncWorkflowService
 from services.end_user_service import EndUserService
+from services.errors.app import QuotaExceededError
+from services.trigger.app_trigger_service import AppTriggerService
 from services.trigger.trigger_provider_service import TriggerProviderService
 from services.trigger.trigger_request_service import TriggerHttpRequestCachingService
 from services.trigger.trigger_subscription_operator_service import TriggerSubscriptionOperatorService
@@ -210,6 +218,8 @@ def _record_trigger_failure_log(
         finished_at=now,
         elapsed_time=0.0,
         total_tokens=0,
+        outputs=None,
+        celery_task_id=None,
     )
     session.add(trigger_log)
     session.commit()
@@ -247,7 +257,7 @@ def dispatch_triggered_workflow(
         tenant_id=subscription.tenant_id, provider_id=TriggerProviderID(subscription.provider_id)
     )
     trigger_entity: TriggerProviderEntity = provider_controller.entity
-    with Session(db.engine) as session:
+    with session_factory.create_session() as session:
         workflows: Mapping[str, Workflow] = _get_latest_workflows_by_app_ids(session, subscribers)
 
         end_users: Mapping[str, EndUser] = EndUserService.create_end_user_batch(
@@ -287,6 +297,17 @@ def dispatch_triggered_workflow(
                 icon_dark_filename=trigger_entity.identity.icon_dark or "",
             )
 
+            # consume quota before invoking trigger
+            quota_charge = unlimited()
+            try:
+                quota_charge = QuotaType.TRIGGER.consume(subscription.tenant_id)
+            except QuotaExceededError:
+                AppTriggerService.mark_tenant_triggers_rate_limited(subscription.tenant_id)
+                logger.info(
+                    "Tenant %s rate limited, skipping plugin trigger %s", subscription.tenant_id, plugin_trigger.id
+                )
+                return 0
+
             node_data: TriggerEventNodeData = TriggerEventNodeData.model_validate(event_node)
             invoke_response: TriggerInvokeEventResponse | None = None
             try:
@@ -305,6 +326,8 @@ def dispatch_triggered_workflow(
                     payload=payload,
                 )
             except PluginInvokeError as e:
+                quota_charge.refund()
+
                 error_message = e.to_user_friendly_error(plugin_name=trigger_entity.identity.name)
                 try:
                     end_user = end_users.get(plugin_trigger.app_id)
@@ -326,6 +349,8 @@ def dispatch_triggered_workflow(
                     )
                 continue
             except Exception:
+                quota_charge.refund()
+
                 logger.exception(
                     "Failed to invoke trigger event for app %s",
                     plugin_trigger.app_id,
@@ -333,6 +358,8 @@ def dispatch_triggered_workflow(
                 continue
 
             if invoke_response is not None and invoke_response.cancelled:
+                quota_charge.refund()
+
                 logger.info(
                     "Trigger ignored for app %s with trigger event %s",
                     plugin_trigger.app_id,
@@ -366,6 +393,8 @@ def dispatch_triggered_workflow(
                     event_name,
                 )
             except Exception:
+                quota_charge.refund()
+
                 logger.exception(
                     "Failed to trigger workflow for app %s",
                     plugin_trigger.app_id,
