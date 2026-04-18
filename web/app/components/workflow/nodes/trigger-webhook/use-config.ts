@@ -1,8 +1,8 @@
 import type { HttpMethod, WebhookHeader, WebhookParameter, WebhookTriggerNodeType } from './types'
+import { toast } from '@langgenius/dify-ui/toast'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore as useAppStore } from '@/app/components/app/store'
-import Toast from '@/app/components/base/toast'
 import { useNodesReadOnly, useWorkflow } from '@/app/components/workflow/hooks'
 import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
 import { fetchWebhookUrl } from '@/service/apps'
@@ -33,10 +33,7 @@ export const useConfig = (id: string, payload: WebhookTriggerNodeType) => {
       ? t(key as never, { ns: 'appDebug', key: fieldLabel })
       : t('varKeyError.keyAlreadyExists', { ns: 'appDebug', key: fieldLabel })
 
-    Toast.notify({
-      type: 'error',
-      message,
-    })
+    toast.error(message)
   }, [t])
 
   const handleMethodChange = useCallback((method: HttpMethod) => {
