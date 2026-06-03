@@ -1,8 +1,12 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as React from 'react'
+import { renderWithSystemFeatures } from '@/__tests__/utils/mock-system-features'
 import Tabs from '../tabs'
 import { TabsEnum } from '../types'
+
+const render = (ui: React.ReactElement) =>
+  renderWithSystemFeatures(ui, { systemFeatures: { enable_marketplace: true } })
 
 const {
   mockSetState,
@@ -17,27 +21,6 @@ const {
     workflowTools: [] as Array<{ icon: string | Record<string, string>, name: string }> | undefined,
     mcpTools: [] as Array<{ icon: string | Record<string, string>, name: string }> | undefined,
   },
-}))
-
-vi.mock('@/app/components/base/tooltip', () => ({
-  default: ({
-    children,
-    popupContent,
-  }: {
-    children: React.ReactNode
-    popupContent: React.ReactNode
-  }) => (
-    <div>
-      <span>{popupContent}</span>
-      {children}
-    </div>
-  ),
-}))
-
-vi.mock('@/context/global-public-context', () => ({
-  useGlobalPublicStore: (selector: (state: { systemFeatures: { enable_marketplace: boolean } }) => unknown) => selector({
-    systemFeatures: { enable_marketplace: true },
-  }),
 }))
 
 vi.mock('@/service/use-plugins', () => ({
@@ -123,11 +106,13 @@ describe('Tabs', () => {
     filterElem: <div>filter</div>,
   }
 
-  it('should render start content and disabled tab tooltip text', () => {
+  it('should render start content and disabled tab tooltip text', async () => {
+    const user = userEvent.setup()
     render(<Tabs {...baseProps} />)
 
     expect(screen.getByText('start-content'))!.toBeInTheDocument()
-    expect(screen.getByText('workflow.tabs.startDisabledTip'))!.toBeInTheDocument()
+    await user.hover(screen.getByText('Blocks'))
+    expect(await screen.findByText('workflow.tabs.startDisabledTip'))!.toBeInTheDocument()
   })
 
   it('should switch tabs through click handlers and render tools content with normalized icons', () => {

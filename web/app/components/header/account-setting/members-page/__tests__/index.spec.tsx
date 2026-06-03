@@ -1,22 +1,25 @@
 import type { AppContextValue } from '@/context/app-context'
 import type { ICurrentWorkspace, Member } from '@/models/common'
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 import { createMockProviderContextValue } from '@/__mocks__/provider-context'
+import { renderWithSystemFeatures } from '@/__tests__/utils/mock-system-features'
 import { Plan } from '@/app/components/billing/type'
 import { useAppContext } from '@/context/app-context'
-import { useGlobalPublicStore } from '@/context/global-public-context'
 import { useProviderContext } from '@/context/provider-context'
 import { useFormatTimeFromNow } from '@/hooks/use-format-time-from-now'
 import { useMembers } from '@/service/use-common'
 import MembersPage from '../index'
 
 vi.mock('@/context/app-context')
-vi.mock('@/context/global-public-context')
 vi.mock('@/context/provider-context')
 vi.mock('@/hooks/use-format-time-from-now')
 vi.mock('@/service/use-common')
+
+const renderMembersPage = () => renderWithSystemFeatures(<MembersPage />, {
+  systemFeatures: { is_email_setup: true },
+})
 
 vi.mock('../edit-workspace-modal', () => ({
   default: ({ onCancel }: { onCancel: () => void }) => (
@@ -49,7 +52,13 @@ vi.mock('../invited-modal', () => ({
   ),
 }))
 vi.mock('../operation', () => ({
-  default: () => <div>Member Operation</div>,
+  default: ({ member }: { member: Member }) => (
+    <div>
+      Member Operation
+      {' '}
+      {member.role}
+    </div>
+  ),
 }))
 vi.mock('../operation/transfer-ownership', () => ({
   default: ({ onOperate }: { onOperate: () => void }) => <button onClick={onOperate}>Transfer ownership</button>,
@@ -112,10 +121,6 @@ describe('MembersPage', () => {
       refetch: mockRefetch,
     } as unknown as ReturnType<typeof useMembers>)
 
-    vi.mocked(useGlobalPublicStore).mockImplementation(selector => selector({
-      systemFeatures: { is_email_setup: true },
-    } as unknown as Parameters<typeof selector>[0]))
-
     vi.mocked(useProviderContext).mockReturnValue(createMockProviderContextValue({
       enableBilling: false,
       isAllowTransferWorkspace: true,
@@ -127,7 +132,7 @@ describe('MembersPage', () => {
   })
 
   it('should render workspace and member information', () => {
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText('Test Workspace'))!.toBeInTheDocument()
     expect(screen.getByText('Owner User'))!.toBeInTheDocument()
@@ -137,7 +142,7 @@ describe('MembersPage', () => {
   it('should open and close invite modal', async () => {
     const user = userEvent.setup()
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     await user.click(screen.getByRole('button', { name: /invite/i }))
     expect(screen.getByText('Invite Modal'))!.toBeInTheDocument()
@@ -149,7 +154,7 @@ describe('MembersPage', () => {
   it('should open invited modal after invite results are sent', async () => {
     const user = userEvent.setup()
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     await user.click(screen.getByRole('button', { name: /invite/i }))
     await user.click(screen.getByRole('button', { name: 'Send Invite Results' }))
@@ -164,7 +169,7 @@ describe('MembersPage', () => {
   it('should open transfer ownership modal when transfer action is used', async () => {
     const user = userEvent.setup()
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     await user.click(screen.getByRole('button', { name: /transfer ownership/i }))
     expect(screen.getByText('Transfer Ownership Modal'))!.toBeInTheDocument()
@@ -176,7 +181,7 @@ describe('MembersPage', () => {
       isAllowTransferWorkspace: false,
     }))
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText('common.members.owner'))!.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /transfer ownership/i })).not.toBeInTheDocument()
@@ -190,7 +195,7 @@ describe('MembersPage', () => {
       isCurrentWorkspaceManager: false,
     } as unknown as AppContextValue)
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.queryByRole('button', { name: /invite/i })).not.toBeInTheDocument()
     expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument()
@@ -199,9 +204,9 @@ describe('MembersPage', () => {
   it('should open and close edit workspace modal', async () => {
     const user = userEvent.setup()
 
-    render(<MembersPage />)
+    renderMembersPage()
 
-    await user.click(screen.getByTestId('edit-workspace-pencil'))
+    await user.click(screen.getByRole('button', { name: /account\.editWorkspaceInfo/i }))
     expect(screen.getByText('Edit Workspace Modal'))!.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Close Edit Workspace' }))
@@ -211,7 +216,7 @@ describe('MembersPage', () => {
   it('should close transfer ownership modal when close is clicked', async () => {
     const user = userEvent.setup()
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     await user.click(screen.getByRole('button', { name: /transfer ownership/i }))
     expect(screen.getByText('Transfer Ownership Modal'))!.toBeInTheDocument()
@@ -230,7 +235,7 @@ describe('MembersPage', () => {
       refetch: mockRefetch,
     } as unknown as ReturnType<typeof useMembers>)
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText(/members\.pending/i))!.toBeInTheDocument()
     expect(screen.getByText(/members\.you/i))!.toBeInTheDocument() // Current user is owner@example.com
@@ -245,7 +250,7 @@ describe('MembersPage', () => {
       } as unknown as ReturnType<typeof useProviderContext>['plan'],
     }))
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText(/plansCommon\.member/i))!.toBeInTheDocument()
     expect(screen.getByText('2'))!.toBeInTheDocument() // accounts.length
@@ -262,7 +267,7 @@ describe('MembersPage', () => {
       } as unknown as ReturnType<typeof useProviderContext>['plan'],
     }))
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText(/plansCommon\.unlimited/i))!.toBeInTheDocument()
   })
@@ -276,7 +281,7 @@ describe('MembersPage', () => {
       } as unknown as ReturnType<typeof useProviderContext>['plan'],
     }))
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     // Plan.team is an unlimited member plan → isNotUnlimitedMemberPlan=false → non-billing layout
     // Plan.team is an unlimited member plan → isNotUnlimitedMemberPlan=false → non-billing layout
@@ -291,10 +296,41 @@ describe('MembersPage', () => {
       isCurrentWorkspaceManager: true,
     } as unknown as AppContextValue)
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByRole('button', { name: /invite/i }))!.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /transfer ownership/i })).not.toBeInTheDocument()
+  })
+
+  it('should allow admins to operate other non-owner members only', () => {
+    vi.mocked(useAppContext).mockReturnValue({
+      userProfile: { email: 'admin@example.com' },
+      currentWorkspace: { name: 'Test Workspace', role: 'admin' } as ICurrentWorkspace,
+      isCurrentWorkspaceOwner: false,
+      isCurrentWorkspaceManager: true,
+    } as unknown as AppContextValue)
+    vi.mocked(useMembers).mockReturnValue({
+      data: {
+        accounts: [
+          mockAccounts[0],
+          mockAccounts[1],
+          { ...mockAccounts[1]!, id: '3', email: 'editor@example.com', name: 'Editor User', role: 'editor' },
+          { ...mockAccounts[1]!, id: '4', email: 'normal@example.com', name: 'Normal User', role: 'normal' },
+          { ...mockAccounts[1]!, id: '5', email: 'dataset@example.com', name: 'Dataset User', role: 'dataset_operator' },
+          { ...mockAccounts[1]!, id: '6', email: 'other-admin@example.com', name: 'Other Admin User', role: 'admin' },
+        ],
+      },
+      refetch: mockRefetch,
+    } as unknown as ReturnType<typeof useMembers>)
+
+    renderMembersPage()
+
+    expect(screen.getByText('Member Operation editor'))!.toBeInTheDocument()
+    expect(screen.getByText('Member Operation normal'))!.toBeInTheDocument()
+    expect(screen.getByText('Member Operation dataset_operator'))!.toBeInTheDocument()
+    expect(screen.getByText('Member Operation admin'))!.toBeInTheDocument()
+    expect(screen.getAllByText('common.members.admin')).toHaveLength(1)
+    expect(screen.queryByText('Member Operation owner')).not.toBeInTheDocument()
   })
 
   it('should use created_at as fallback when last_active_at is empty', () => {
@@ -308,7 +344,7 @@ describe('MembersPage', () => {
       refetch: mockRefetch,
     } as unknown as ReturnType<typeof useMembers>)
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(mockFormatTimeFromNow).toHaveBeenCalledWith(1700000000000)
   })
@@ -326,7 +362,7 @@ describe('MembersPage', () => {
       } as unknown as ReturnType<typeof useProviderContext>['plan'],
     }))
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText(/plansCommon\.member/i))!.toBeInTheDocument()
     expect(screen.getByText('1'))!.toBeInTheDocument()
@@ -338,7 +374,7 @@ describe('MembersPage', () => {
       refetch: mockRefetch,
     } as unknown as ReturnType<typeof useMembers>)
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText(/plansCommon\.memberAfter/i))!.toBeInTheDocument()
     expect(screen.getByText('1'))!.toBeInTheDocument()
@@ -356,7 +392,7 @@ describe('MembersPage', () => {
       refetch: mockRefetch,
     } as unknown as ReturnType<typeof useMembers>)
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText('common.members.normal'))!.toBeInTheDocument()
   })
@@ -370,7 +406,7 @@ describe('MembersPage', () => {
       } as unknown as ReturnType<typeof useProviderContext>['plan'],
     }))
 
-    render(<MembersPage />)
+    renderMembersPage()
 
     expect(screen.getByText('Upgrade Button'))!.toBeInTheDocument()
   })

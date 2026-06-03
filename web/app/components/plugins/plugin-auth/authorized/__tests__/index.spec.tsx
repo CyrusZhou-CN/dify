@@ -73,6 +73,8 @@ vi.mock('@/hooks/use-oauth', () => ({
   openOAuthPopup: vi.fn(),
 }))
 
+vi.mock('@langgenius/dify-ui/popover', async () => await import('@/__mocks__/base-ui-popover'))
+
 // Mock service/use-triggers
 vi.mock('@/service/use-triggers', () => ({
   useTriggerPluginDynamicOptions: () => ({
@@ -236,9 +238,7 @@ describe('Authorized Component', () => {
         { wrapper: createWrapper() },
       )
 
-      // The indicator should be rendered
-      // The indicator should be rendered
-      expect(container.querySelector('[data-testid="status-indicator"]'))!.toBeInTheDocument()
+      expect(container.querySelector('.shadow-status-indicator-gray-shadow'))!.toBeInTheDocument()
     })
   })
 
@@ -1425,7 +1425,7 @@ describe('Authorized Component', () => {
       expect(document.querySelector('.custom-popup-class'))!.toBeInTheDocument()
     })
 
-    it('should pass placement to PortalToFollowElem', () => {
+    it('should pass placement to Popover', () => {
       const pluginPayload = createPluginPayload()
       const credentials = [createCredential()]
 

@@ -3,12 +3,14 @@ import { defaultPlan } from '../../config'
 import { Plan } from '../../type'
 import VectorSpaceInfo from '../vector-space-info'
 
-const queryPlaceholder = () => document.body.querySelector('[aria-hidden="true"]')
+const queryPlaceholder = () =>
+  document.body.querySelector('[aria-hidden="true"].bg-components-progress-bar-bg')
 
 // Mock provider context with configurable plan
 let mockPlanType = Plan.sandbox
 let mockVectorSpaceUsage = 30
 let mockVectorSpaceTotal = 5120
+let mockVectorSpaceApiData: { size: number, limit: number } | undefined
 
 vi.mock('@/context/provider-context', () => ({
   useProviderContext: () => ({
@@ -27,6 +29,12 @@ vi.mock('@/context/provider-context', () => ({
   }),
 }))
 
+vi.mock('@/service/use-billing', () => ({
+  useCurrentPlanVectorSpace: () => ({
+    data: mockVectorSpaceApiData,
+  }),
+}))
+
 describe('VectorSpaceInfo', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -34,6 +42,7 @@ describe('VectorSpaceInfo', () => {
     mockPlanType = Plan.sandbox
     mockVectorSpaceUsage = 30
     mockVectorSpaceTotal = 5120
+    mockVectorSpaceApiData = undefined
   })
 
   describe('Rendering', () => {
@@ -250,6 +259,19 @@ describe('VectorSpaceInfo', () => {
 
       expect(screen.getByText('100')).toBeInTheDocument()
       expect(screen.getByText('102400MB')).toBeInTheDocument()
+    })
+
+    it('should use vector space API limit directly', () => {
+      mockVectorSpaceApiData = {
+        size: 100,
+        limit: 0,
+      }
+
+      render(<VectorSpaceInfo />)
+
+      expect(screen.getByText('100')).toBeInTheDocument()
+      expect(screen.getByText('0MB')).toBeInTheDocument()
+      expect(screen.queryByText('billing.plansCommon.unlimited')).not.toBeInTheDocument()
     })
   })
 })

@@ -172,11 +172,6 @@ vi.mock('@langgenius/dify-ui/toast', () => ({
     promise: toastMocks.promise,
   }),
 }))
-vi.mock('@/app/components/workflow/utils', () => ({
-  getKeyboardKeyCodeBySystem: (key: string) => key,
-  getKeyboardKeyNameBySystem: (key: string) => key,
-}))
-
 vi.mock('ahooks', () => ({
   useBoolean: (initial: boolean) => {
     let value = initial
@@ -188,28 +183,6 @@ vi.mock('ahooks', () => ({
         toggle: vi.fn(() => { value = !value }),
       },
     ]
-  },
-  useKeyPress: vi.fn(),
-}))
-
-let portalOpenState = false
-vi.mock('@/app/components/base/portal-to-follow-elem', () => ({
-  PortalToFollowElem: ({ children, open, onOpenChange: _onOpenChange }: PropsWithChildren<{
-    open: boolean
-    onOpenChange: (open: boolean) => void
-    placement?: string
-    offset?: unknown
-  }>) => {
-    portalOpenState = open
-    return <div data-testid="portal-elem" data-open={open}>{children}</div>
-  },
-  PortalToFollowElemTrigger: ({ children, onClick }: PropsWithChildren<{ onClick?: () => void }>) => (
-    <div data-testid="portal-trigger" onClick={onClick}>{children}</div>
-  ),
-  PortalToFollowElemContent: ({ children }: PropsWithChildren) => {
-    if (!portalOpenState)
-      return null
-    return <div data-testid="portal-content">{children}</div>
   },
 }))
 
@@ -229,7 +202,6 @@ vi.mock('../../../publish-as-knowledge-pipeline-modal', () => ({
 describe('RagPipelineHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    portalOpenState = false
     mockStoreState = {
       pipelineId: 'test-pipeline-id',
       showDebugAndPreviewPanel: false,
@@ -351,7 +323,6 @@ describe('InputFieldButton', () => {
 describe('Publisher', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    portalOpenState = false
   })
 
   describe('Rendering', () => {
@@ -367,9 +338,9 @@ describe('Publisher', () => {
       expect(button)!.toHaveClass('px-2')
     })
 
-    it('should render portal trigger element', () => {
+    it('should render publish trigger button', () => {
       render(<Publisher />)
-      expect(screen.getByTestId('portal-trigger'))!.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /workflow\.common\.publish/i }))!.toBeInTheDocument()
     })
   })
 
@@ -377,7 +348,7 @@ describe('Publisher', () => {
     it('should call handleSyncWorkflowDraft when opening', () => {
       render(<Publisher />)
 
-      fireEvent.click(screen.getByTestId('portal-trigger'))
+      fireEvent.click(screen.getByRole('button', { name: /workflow\.common\.publish/i }))
 
       expect(mockHandleSyncWorkflowDraft).toHaveBeenCalledWith(true)
     })
@@ -385,12 +356,14 @@ describe('Publisher', () => {
     it('should toggle open state when trigger clicked', () => {
       render(<Publisher />)
 
-      const portal = screen.getByTestId('portal-elem')
-      expect(portal)!.toHaveAttribute('data-open', 'false')
+      const trigger = screen.getByRole('button', { name: /workflow\.common\.publish/i })
+      expect(trigger)!.toHaveAttribute('aria-expanded', 'false')
 
-      fireEvent.click(screen.getByTestId('portal-trigger'))
+      fireEvent.click(trigger)
 
       expect(mockHandleSyncWorkflowDraft).toHaveBeenCalled()
+      expect(trigger)!.toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByText(/workflow\.common\.publishUpdate/i))!.toBeInTheDocument()
     })
   })
 })
@@ -429,10 +402,11 @@ describe('Popup', () => {
     })
 
     it('should render keyboard shortcuts', () => {
-      render(<Popup />)
+      const { container } = render(<Popup />)
 
-      expect(screen.getByText('ctrl'))!.toBeInTheDocument()
-      expect(screen.getByText('⇧'))!.toBeInTheDocument()
+      expect(container.querySelectorAll('kbd')).toHaveLength(3)
+      expect(screen.getByText('Ctrl'))!.toBeInTheDocument()
+      expect(screen.getByText('Shift'))!.toBeInTheDocument()
       expect(screen.getByText('P'))!.toBeInTheDocument()
     })
 
@@ -587,9 +561,10 @@ describe('RunMode', () => {
     })
 
     it('should render keyboard shortcuts when not disabled', () => {
-      render(<RunMode />)
+      const { container } = render(<RunMode />)
 
-      expect(screen.getByText('alt'))!.toBeInTheDocument()
+      expect(container.querySelectorAll('kbd')).toHaveLength(2)
+      expect(screen.getByText('Alt'))!.toBeInTheDocument()
       expect(screen.getByText('R'))!.toBeInTheDocument()
     })
   })
@@ -978,7 +953,6 @@ describe('RunMode', () => {
 describe('Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    portalOpenState = false
     mockStoreState = {
       pipelineId: 'test-pipeline-id',
       showDebugAndPreviewPanel: false,
@@ -1099,9 +1073,10 @@ describe('Edge Cases', () => {
       mockStoreState.workflowRunningData = null
       mockStoreState.isPreparingDataSource = false
 
-      render(<RunMode />)
+      const { container } = render(<RunMode />)
 
-      expect(screen.getByText('alt'))!.toBeInTheDocument()
+      expect(container.querySelectorAll('kbd')).toHaveLength(2)
+      expect(screen.getByText('Alt'))!.toBeInTheDocument()
       expect(screen.getByText('R'))!.toBeInTheDocument()
     })
 

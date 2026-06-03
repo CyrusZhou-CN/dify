@@ -8,10 +8,17 @@ from flask import request
 from flask_restx import Resource
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
+from werkzeug.exceptions import NotFound
 
 from configs import dify_config
 from constants.languages import supported_language
-from controllers.common.schema import register_schema_models
+from controllers.common.fields import (
+    AvatarUrlResponse,
+    SimpleResultDataResponse,
+    SimpleResultResponse,
+    VerificationTokenResponse,
+)
+from controllers.common.schema import query_params_from_model, register_response_schema_models, register_schema_models
 from controllers.console import console_ns
 from controllers.console.auth.error import (
     EmailAlreadyInUseError,
@@ -41,15 +48,21 @@ from fields.base import ResponseModel
 from fields.member_fields import Account as AccountResponse
 from graphon.file import helpers as file_helpers
 from libs.datetime_utils import naive_utc_now
-from libs.helper import EmailStr, extract_remote_ip, timezone
+from libs.helper import EmailStr, dump_response, extract_remote_ip, timezone, to_timestamp
 from libs.login import current_account_with_tenant, login_required
 from models import AccountIntegrate, InvitationCode
 from models.account import AccountStatus, InvitationCodeStatus
+from models.enums import CreatorUserRole
+from models.model import UploadFile
 from services.account_service import AccountService
 from services.billing_service import BillingService
+from services.entities.auth_entities import (
+    ChangeEmailNewEmailToken,
+    ChangeEmailNewEmailVerifiedToken,
+    ChangeEmailOldEmailToken,
+    ChangeEmailOldEmailVerifiedToken,
+)
 from services.errors.account import CurrentPasswordIncorrectError as ServiceCurrentPasswordIncorrectError
-
-DEFAULT_REF_TEMPLATE_SWAGGER_2_0 = "#/definitions/{model}"
 
 
 class AccountInitPayload(BaseModel):
@@ -158,37 +171,29 @@ class CheckEmailUniquePayload(BaseModel):
     email: EmailStr
 
 
-def reg(cls: type[BaseModel]):
-    console_ns.schema_model(cls.__name__, cls.model_json_schema(ref_template=DEFAULT_REF_TEMPLATE_SWAGGER_2_0))
-
-
-reg(AccountInitPayload)
-reg(AccountNamePayload)
-reg(AccountAvatarPayload)
-reg(AccountAvatarQuery)
-reg(AccountInterfaceLanguagePayload)
-reg(AccountInterfaceThemePayload)
-reg(AccountTimezonePayload)
-reg(AccountPasswordPayload)
-reg(AccountDeletePayload)
-reg(AccountDeletionFeedbackPayload)
-reg(EducationActivatePayload)
-reg(EducationAutocompleteQuery)
-reg(ChangeEmailSendPayload)
-reg(ChangeEmailValidityPayload)
-reg(ChangeEmailResetPayload)
-reg(CheckEmailUniquePayload)
-register_schema_models(console_ns, AccountResponse)
+register_schema_models(
+    console_ns,
+    AccountInitPayload,
+    AccountNamePayload,
+    AccountAvatarPayload,
+    AccountAvatarQuery,
+    AccountInterfaceLanguagePayload,
+    AccountInterfaceThemePayload,
+    AccountTimezonePayload,
+    AccountPasswordPayload,
+    AccountDeletePayload,
+    AccountDeletionFeedbackPayload,
+    EducationActivatePayload,
+    EducationAutocompleteQuery,
+    ChangeEmailSendPayload,
+    ChangeEmailValidityPayload,
+    ChangeEmailResetPayload,
+    CheckEmailUniquePayload,
+)
 
 
 def _serialize_account(account) -> dict[str, Any]:
     return AccountResponse.model_validate(account, from_attributes=True).model_dump(mode="json")
-
-
-def _to_timestamp(value: datetime | int | None) -> int | None:
-    if isinstance(value, datetime):
-        return int(value.timestamp())
-    return value
 
 
 class AccountIntegrateResponse(ResponseModel):
@@ -200,7 +205,7 @@ class AccountIntegrateResponse(ResponseModel):
     @field_validator("created_at", mode="before")
     @classmethod
     def _normalize_created_at(cls, value: datetime | int | None) -> int | None:
-        return _to_timestamp(value)
+        return to_timestamp(value)
 
 
 class AccountIntegrateListResponse(ResponseModel):
@@ -220,7 +225,7 @@ class EducationStatusResponse(ResponseModel):
     @field_validator("expire_at", mode="before")
     @classmethod
     def _normalize_expire_at(cls, value: datetime | int | None) -> int | None:
-        return _to_timestamp(value)
+        return to_timestamp(value)
 
 
 class EducationAutocompleteResponse(ResponseModel):
@@ -237,11 +242,20 @@ register_schema_models(
     EducationStatusResponse,
     EducationAutocompleteResponse,
 )
+register_response_schema_models(
+    console_ns,
+    AccountResponse,
+    AvatarUrlResponse,
+    SimpleResultDataResponse,
+    SimpleResultResponse,
+    VerificationTokenResponse,
+)
 
 
 @console_ns.route("/account/init")
 class AccountInitApi(Resource):
     @console_ns.expect(console_ns.models[AccountInitPayload.__name__])
+    @console_ns.response(200, "Success", console_ns.models[SimpleResultResponse.__name__])
     @setup_required
     @login_required
     def post(self):
@@ -315,17 +329,33 @@ class AccountNameApi(Resource):
 
 @console_ns.route("/account/avatar")
 class AccountAvatarApi(Resource):
-    @console_ns.expect(console_ns.models[AccountAvatarQuery.__name__])
     @console_ns.doc("get_account_avatar")
     @console_ns.doc(description="Get account avatar url")
+    @console_ns.doc(params=query_params_from_model(AccountAvatarQuery))
+    @console_ns.response(200, "Success", console_ns.models[AvatarUrlResponse.__name__])
     @setup_required
     @login_required
     @account_initialization_required
     def get(self):
-        args = AccountAvatarQuery.model_validate(request.args.to_dict(flat=True))  # type: ignore
+        current_user, current_tenant_id = current_account_with_tenant()
+        args = AccountAvatarQuery.model_validate(request.args.to_dict(flat=True))
+        avatar = args.avatar
 
-        avatar_url = file_helpers.get_signed_file_url(args.avatar)
-        return {"avatar_url": avatar_url}
+        if avatar.startswith(("http://", "https://")):
+            return dump_response(AvatarUrlResponse, {"avatar_url": avatar})
+
+        upload_file = db.session.scalar(select(UploadFile).where(UploadFile.id == avatar).limit(1))
+        if upload_file is None:
+            raise NotFound("Avatar file not found")
+
+        if upload_file.tenant_id != current_tenant_id:
+            raise NotFound("Avatar file not found")
+
+        if upload_file.created_by_role != CreatorUserRole.ACCOUNT or upload_file.created_by != current_user.id:
+            raise NotFound("Avatar file not found")
+
+        avatar_url = file_helpers.get_signed_file_url(upload_file_id=upload_file.id)
+        return dump_response(AvatarUrlResponse, {"avatar_url": avatar_url})
 
     @console_ns.expect(console_ns.models[AccountAvatarPayload.__name__])
     @setup_required
@@ -464,6 +494,7 @@ class AccountDeleteVerifyApi(Resource):
     @setup_required
     @login_required
     @account_initialization_required
+    @console_ns.response(200, "Success", console_ns.models[SimpleResultDataResponse.__name__])
     def get(self):
         account, _ = current_account_with_tenant()
 
@@ -476,6 +507,7 @@ class AccountDeleteVerifyApi(Resource):
 @console_ns.route("/account/delete")
 class AccountDeleteApi(Resource):
     @console_ns.expect(console_ns.models[AccountDeletePayload.__name__])
+    @console_ns.response(200, "Success", console_ns.models[SimpleResultResponse.__name__])
     @setup_required
     @login_required
     @account_initialization_required
@@ -496,6 +528,7 @@ class AccountDeleteApi(Resource):
 @console_ns.route("/account/delete/feedback")
 class AccountDeleteUpdateFeedbackApi(Resource):
     @console_ns.expect(console_ns.models[AccountDeletionFeedbackPayload.__name__])
+    @console_ns.response(200, "Success", console_ns.models[SimpleResultResponse.__name__])
     @setup_required
     def post(self):
         payload = console_ns.payload or {}
@@ -575,6 +608,7 @@ class EducationAutoCompleteApi(Resource):
 @console_ns.route("/account/change-email")
 class ChangeEmailSendEmailApi(Resource):
     @console_ns.expect(console_ns.models[ChangeEmailSendPayload.__name__])
+    @console_ns.response(200, "Success", console_ns.models[SimpleResultDataResponse.__name__])
     @enable_change_email
     @setup_required
     @login_required
@@ -592,35 +626,41 @@ class ChangeEmailSendEmailApi(Resource):
             language = "zh-Hans"
         else:
             language = "en-US"
-        account = None
-        user_email = None
+        account = current_user
+        user_email = current_user.email
         email_for_sending = args.email.lower()
-        if args.phase is not None and args.phase == "new_email":
+        # Default to the initial phase; any legacy/unexpected client input is
+        # coerced back to `old_email` so we never trust the caller to declare
+        # later phases without a verified predecessor token.
+        send_phase = AccountService.CHANGE_EMAIL_PHASE_OLD
+        if args.phase is not None and args.phase == AccountService.CHANGE_EMAIL_PHASE_NEW:
+            send_phase = AccountService.CHANGE_EMAIL_PHASE_NEW
             if args.token is None:
                 raise InvalidTokenError()
 
             reset_data = AccountService.get_change_email_data(args.token)
             if reset_data is None:
                 raise InvalidTokenError()
-            user_email = reset_data.get("email", "")
+
+            if not isinstance(reset_data, ChangeEmailOldEmailVerifiedToken):
+                raise InvalidTokenError()
+            if not reset_data.is_bound_to_account(current_user.id):
+                raise InvalidTokenError()
+            user_email = reset_data.email
 
             if user_email.lower() != current_user.email.lower():
                 raise InvalidEmailError()
-
-            user_email = current_user.email
         else:
-            account = AccountService.get_account_by_email_with_case_fallback(args.email)
-            if account is None:
-                raise AccountNotFound()
-            email_for_sending = account.email
-            user_email = account.email
+            if email_for_sending != current_user.email.lower():
+                raise InvalidEmailError()
+            email_for_sending = current_user.email
 
         token = AccountService.send_change_email_email(
             account=account,
             email=email_for_sending,
             old_email=user_email,
             language=language,
-            phase=args.phase,
+            phase=send_phase,
         )
         return {"result": "success", "data": token}
 
@@ -628,11 +668,13 @@ class ChangeEmailSendEmailApi(Resource):
 @console_ns.route("/account/change-email/validity")
 class ChangeEmailCheckApi(Resource):
     @console_ns.expect(console_ns.models[ChangeEmailValidityPayload.__name__])
+    @console_ns.response(200, "Success", console_ns.models[VerificationTokenResponse.__name__])
     @enable_change_email
     @setup_required
     @login_required
     @account_initialization_required
     def post(self):
+        current_user, _ = current_account_with_tenant()
         payload = console_ns.payload or {}
         args = ChangeEmailValidityPayload.model_validate(payload)
 
@@ -645,23 +687,26 @@ class ChangeEmailCheckApi(Resource):
         token_data = AccountService.get_change_email_data(args.token)
         if token_data is None:
             raise InvalidTokenError()
+        if not token_data.is_bound_to_account(current_user.id):
+            raise InvalidTokenError()
 
-        token_email = token_data.get("email")
-        normalized_token_email = token_email.lower() if isinstance(token_email, str) else token_email
+        normalized_token_email = token_data.email.lower()
         if user_email != normalized_token_email:
             raise InvalidEmailError()
 
-        if args.code != token_data.get("code"):
+        if args.code != token_data.code:
             AccountService.add_change_email_error_rate_limit(user_email)
             raise EmailCodeError()
+
+        if isinstance(token_data, ChangeEmailOldEmailToken | ChangeEmailNewEmailToken):
+            refreshed_token_data = token_data.promote()
+        else:
+            raise InvalidTokenError()
 
         # Verified, revoke the first token
         AccountService.revoke_change_email_token(args.token)
 
-        # Refresh token data by generating a new token
-        _, new_token = AccountService.generate_change_email_token(
-            user_email, code=args.code, old_email=token_data.get("old_email"), additional_data={}
-        )
+        new_token = AccountService.generate_change_email_token(refreshed_token_data, current_user)
 
         AccountService.reset_change_email_error_rate_limit(user_email)
         return {"is_valid": True, "email": normalized_token_email, "token": new_token}
@@ -686,16 +731,27 @@ class ChangeEmailResetApi(Resource):
         if not AccountService.check_email_unique(normalized_new_email):
             raise EmailAlreadyInUseError()
 
+        current_user, _ = current_account_with_tenant()
         reset_data = AccountService.get_change_email_data(args.token)
         if not reset_data:
             raise InvalidTokenError()
+        if not reset_data.is_bound_to_account(current_user.id):
+            raise InvalidTokenError()
 
-        AccountService.revoke_change_email_token(args.token)
+        if not isinstance(reset_data, ChangeEmailNewEmailVerifiedToken):
+            raise InvalidTokenError()
 
-        old_email = reset_data.get("old_email", "")
-        current_user, _ = current_account_with_tenant()
-        if current_user.email.lower() != old_email.lower():
+        # Bind the new email to the token that was mailed and verified, so a
+        # verified token cannot be reused with a different `new_email` value.
+        if reset_data.email.lower() != normalized_new_email:
+            raise InvalidTokenError()
+
+        if current_user.email.lower() != reset_data.old_email.lower():
             raise AccountNotFound()
+
+        # Revoke only after all checks pass so failed attempts don't burn a
+        # legitimately verified token.
+        AccountService.revoke_change_email_token(args.token)
 
         updated_account = AccountService.update_account_email(current_user, email=normalized_new_email)
 
@@ -709,6 +765,7 @@ class ChangeEmailResetApi(Resource):
 @console_ns.route("/account/change-email/check-email-unique")
 class CheckEmailUnique(Resource):
     @console_ns.expect(console_ns.models[CheckEmailUniquePayload.__name__])
+    @console_ns.response(200, "Success", console_ns.models[SimpleResultResponse.__name__])
     @setup_required
     def post(self):
         payload = console_ns.payload or {}

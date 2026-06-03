@@ -1,8 +1,8 @@
 import type { AccountSettingTab } from '../constants'
 import type { AppContextValue } from '@/context/app-context'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { useState } from 'react'
+import { renderWithSystemFeatures } from '@/__tests__/utils/mock-system-features'
 import { useAppContext } from '@/context/app-context'
 import { baseProviderContextValue, useProviderContext } from '@/context/provider-context'
 import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
@@ -47,36 +47,6 @@ vi.mock('@/hooks/use-breakpoints', () => ({
   default: vi.fn(),
 }))
 
-vi.mock('@/context/global-public-context', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/context/global-public-context')>()
-  const systemFeatures = {
-    ...actual.useGlobalPublicStore.getState().systemFeatures,
-    webapp_auth: {
-      ...actual.useGlobalPublicStore.getState().systemFeatures.webapp_auth,
-      enabled: true,
-    },
-    branding: {
-      ...actual.useGlobalPublicStore.getState().systemFeatures.branding,
-      enabled: false,
-    },
-    enable_marketplace: true,
-    enable_collaboration_mode: false,
-  }
-
-  return {
-    ...actual,
-    useGlobalPublicStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
-      systemFeatures,
-    }),
-    useSystemFeaturesQuery: () => ({
-      data: systemFeatures,
-      isPending: false,
-      isLoading: false,
-      isFetching: false,
-    }),
-  }
-})
-
 vi.mock('@/app/components/header/account-setting/model-provider-page/hooks', () => ({
   useDefaultModel: vi.fn(() => ({ data: null, isLoading: false })),
   useUpdateDefaultModel: vi.fn(() => ({ trigger: vi.fn() })),
@@ -96,10 +66,32 @@ vi.mock('@/service/use-datasource', () => ({
 }))
 
 vi.mock('@/service/use-common', () => ({
-  useApiBasedExtensions: vi.fn(() => ({ data: [], isPending: false })),
   useMembers: vi.fn(() => ({ data: { accounts: [] }, refetch: vi.fn() })),
   useProviderContext: vi.fn(),
 }))
+
+vi.mock('@/service/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/service/client')>()
+  return {
+    ...actual,
+    consoleQuery: new Proxy(actual.consoleQuery, {
+      get(target, prop, receiver) {
+        if (prop === 'apiBasedExtension') {
+          return {
+            get: {
+              queryOptions: () => ({
+                queryKey: ['console', 'api-based-extension'],
+                queryFn: () => Promise.resolve([]),
+              }),
+            },
+          }
+        }
+
+        return Reflect.get(target, prop, receiver)
+      },
+    }),
+  }
+})
 
 vi.mock('@/app/components/billing/billing-page', () => ({
   __esModule: true,
@@ -176,11 +168,14 @@ describe('AccountSetting', () => {
       )
     }
 
-    return render(
-      <QueryClientProvider client={new QueryClient()}>
-        <StatefulAccountSetting />
-      </QueryClientProvider>,
-    )
+    return renderWithSystemFeatures(<StatefulAccountSetting />, {
+      systemFeatures: {
+        webapp_auth: { enabled: true },
+        branding: { enabled: false },
+        enable_marketplace: true,
+        enable_collaboration_mode: false,
+      },
+    })
   }
 
   beforeEach(() => {

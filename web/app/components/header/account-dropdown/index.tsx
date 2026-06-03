@@ -2,8 +2,9 @@
 
 import type { MouseEventHandler, ReactNode } from 'react'
 import { Avatar } from '@langgenius/dify-ui/avatar'
-import { cn } from '@langgenius/dify-ui/cn'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLinkItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@langgenius/dify-ui/dropdown-menu'
+import { StatusDot } from '@langgenius/dify-ui/status-dot'
+import { useSuspenseQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { resetUser } from '@/app/components/base/amplitude/utils'
@@ -12,20 +13,24 @@ import ThemeSwitcher from '@/app/components/base/theme-switcher'
 import { ACCOUNT_SETTING_TAB } from '@/app/components/header/account-setting/constants'
 import { IS_CLOUD_EDITION } from '@/config'
 import { useAppContext } from '@/context/app-context'
-import { useGlobalPublicStore } from '@/context/global-public-context'
 import { useDocLink } from '@/context/i18n'
 import { useModalContext } from '@/context/modal-context'
 import { useProviderContext } from '@/context/provider-context'
 import { env } from '@/env'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
+import { useSetLocalStorage } from '@/hooks/use-local-storage'
 import Link from '@/next/link'
 import { useRouter } from '@/next/navigation'
 import { useLogout } from '@/service/use-common'
 import AccountAbout from '../account-about'
 import GithubStar from '../github-star'
-import Indicator from '../indicator'
 import Compliance from './compliance'
 import { ExternalLinkIndicator, MenuItemContent } from './menu-item-content'
 import Support from './support'
+
+const EDUCATION_REVERIFY_PREV_EXPIRE_AT_KEY = 'education-reverify-prev-expire-at'
+const EDUCATION_REVERIFY_HAS_NOTICED_KEY = 'education-reverify-has-noticed'
+const EDUCATION_EXPIRED_HAS_NOTICED_KEY = 'education-expired-has-noticed'
 
 type AccountMenuRouteItemProps = {
   href: string
@@ -109,36 +114,37 @@ function AccountMenuSection({ children }: AccountMenuSectionProps) {
 export default function AppSelector() {
   const router = useRouter()
   const [aboutVisible, setAboutVisible] = useState(false)
-  const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false)
-  const { systemFeatures } = useGlobalPublicStore()
+  const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
 
   const { t } = useTranslation()
   const docLink = useDocLink()
   const { userProfile, langGeniusVersionInfo, isCurrentWorkspaceOwner } = useAppContext()
   const { isEducationAccount } = useProviderContext()
   const { setShowAccountSettingModal } = useModalContext()
+  const clearEducationReverifyPrevExpireAt = useSetLocalStorage<number>(EDUCATION_REVERIFY_PREV_EXPIRE_AT_KEY)
+  const clearEducationReverifyHasNoticed = useSetLocalStorage<boolean>(EDUCATION_REVERIFY_HAS_NOTICED_KEY)
+  const clearEducationExpiredHasNoticed = useSetLocalStorage<boolean>(EDUCATION_EXPIRED_HAS_NOTICED_KEY)
 
   const { mutateAsync: logout } = useLogout()
   const handleLogout = async () => {
     await logout()
     resetUser()
-    localStorage.removeItem('setup_status')
     // Tokens are now stored in cookies and cleared by backend
 
     // To avoid use other account's education notice info
-    localStorage.removeItem('education-reverify-prev-expire-at')
-    localStorage.removeItem('education-reverify-has-noticed')
-    localStorage.removeItem('education-expired-has-noticed')
+    clearEducationReverifyPrevExpireAt(null)
+    clearEducationReverifyHasNoticed(null)
+    clearEducationExpiredHasNoticed(null)
 
     router.push('/signin')
   }
 
   return (
     <div>
-      <DropdownMenu open={isAccountMenuOpen} onOpenChange={setIsAccountMenuOpen}>
+      <DropdownMenu>
         <DropdownMenuTrigger
           aria-label={t('account.account', { ns: 'common' })}
-          className={cn('inline-flex items-center rounded-[20px] p-0.5 hover:bg-background-default-dodge', isAccountMenuOpen && 'bg-background-default-dodge')}
+          className="inline-flex items-center rounded-[20px] p-0.5 hover:bg-background-default-dodge data-popup-open:bg-background-default-dodge"
         >
           <Avatar avatar={userProfile.avatar_url} name={userProfile.name} size="lg" />
         </DropdownMenuTrigger>
@@ -153,7 +159,7 @@ export default function AppSelector() {
                   {userProfile.name}
                   {isEducationAccount && (
                     <PremiumBadge size="s" color="blue" className="ml-1 px-2!">
-                      <span aria-hidden className="mr-1 i-ri-graduation-cap-fill h-3 w-3" />
+                      <span aria-hidden className="mr-1 i-ri-graduation-cap-fill size-3" />
                       <span className="system-2xs-medium">EDU</span>
                     </PremiumBadge>
                   )}
@@ -184,7 +190,7 @@ export default function AppSelector() {
                   label={t('userProfile.helpCenter', { ns: 'common' })}
                   trailing={<ExternalLinkIndicator />}
                 />
-                <Support closeAccountDropdown={() => setIsAccountMenuOpen(false)} />
+                <Support />
                 {IS_CLOUD_EDITION && isCurrentWorkspaceOwner && <Compliance />}
               </AccountMenuSection>
               <DropdownMenuSeparator className="my-0! bg-divider-subtle" />
@@ -213,12 +219,11 @@ export default function AppSelector() {
                       label={t('userProfile.about', { ns: 'common' })}
                       onClick={() => {
                         setAboutVisible(true)
-                        setIsAccountMenuOpen(false)
                       }}
                       trailing={(
                         <div className="flex shrink-0 items-center">
                           <div className="mr-2 system-xs-regular text-text-tertiary">{langGeniusVersionInfo.current_version}</div>
-                          <Indicator color={langGeniusVersionInfo.current_version === langGeniusVersionInfo.latest_version ? 'green' : 'orange'} />
+                          <StatusDot status={langGeniusVersionInfo.current_version === langGeniusVersionInfo.latest_version ? 'success' : 'warning'} />
                         </div>
                       )}
                     />

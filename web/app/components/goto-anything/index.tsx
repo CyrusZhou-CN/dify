@@ -22,7 +22,7 @@ type Props = {
   onHide?: () => void
 }
 
-const GotoAnything: FC<Props> = ({
+const GotoAnythingDialog: FC<Props> = ({
   onHide,
 }) => {
   const { t } = useTranslation()
@@ -44,26 +44,25 @@ const GotoAnything: FC<Props> = ({
 
   // Modal state management
   const {
-    show,
-    setShow,
+    open,
+    onOpenChange,
     inputRef,
-    handleClose: modalClose,
   } = useGotoAnythingModal()
 
   // Reset state when modal opens/closes
   useEffect(() => {
-    if (show && !prevShowRef.current) {
+    if (open && !prevShowRef.current) {
       // Modal just opened - reset search
       setSearchQuery('')
     }
-    else if (!show && prevShowRef.current) {
+    else if (!open && prevShowRef.current) {
       // Modal just closed
       setSearchQuery('')
       clearSelection()
       onHide?.()
     }
-    prevShowRef.current = show
-  }, [show, setSearchQuery, clearSelection, onHide])
+    prevShowRef.current = open
+  }, [open, setSearchQuery, clearSelection, onHide])
 
   // Results fetching and processing
   const {
@@ -94,7 +93,7 @@ const GotoAnything: FC<Props> = ({
     setSearchQuery,
     clearSelection,
     inputRef,
-    onClose: () => setShow(false),
+    onClose: () => onOpenChange(false),
   })
 
   // Handle search input change
@@ -118,12 +117,12 @@ const GotoAnything: FC<Props> = ({
         if (handler?.mode === 'direct' && handler.execute && isAvailable) {
           e.preventDefault()
           handler.execute()
-          setShow(false)
+          onOpenChange(false)
           setSearchQuery('')
         }
       }
     }
-  }, [searchQuery, setShow, setSearchQuery])
+  }, [searchQuery, onOpenChange, setSearchQuery])
 
   // Determine which empty state to show
   const emptyStateVariant = useMemo(() => {
@@ -144,11 +143,8 @@ const GotoAnything: FC<Props> = ({
     <>
       <SlashCommandProvider />
       <Dialog
-        open={show}
-        onOpenChange={(open) => {
-          if (!open)
-            modalClose()
-        }}
+        open={open}
+        onOpenChange={onOpenChange}
       >
         <DialogContent className="w-[480px]! overflow-hidden p-0!">
           <Command
@@ -234,15 +230,10 @@ const GotoAnything: FC<Props> = ({
   )
 }
 
-/**
- * GotoAnything component with context provider
- */
-const GotoAnythingWithContext: FC<Props> = (props) => {
+export const GotoAnything: FC<Props> = (props) => {
   return (
     <GotoAnythingProvider>
-      <GotoAnything {...props} />
+      <GotoAnythingDialog {...props} />
     </GotoAnythingProvider>
   )
 }
-
-export default GotoAnythingWithContext

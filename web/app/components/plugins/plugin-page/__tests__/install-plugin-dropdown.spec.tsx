@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderWithSystemFeatures } from '@/__tests__/utils/mock-system-features'
 import InstallPluginDropdown from '../install-plugin-dropdown'
 
-let portalOpen = false
 const {
   mockSystemFeatures,
 } = vi.hoisted(() => ({
@@ -14,14 +15,16 @@ const {
   },
 }))
 
-vi.mock('@/config', () => ({
-  SUPPORT_INSTALL_LOCAL_FILE_EXTENSIONS: '.difypkg,.zip',
-}))
+vi.mock('@/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/config')>()
+  return {
+    ...actual,
+    SUPPORT_INSTALL_LOCAL_FILE_EXTENSIONS: '.difypkg,.zip',
+  }
+})
 
-vi.mock('@/context/global-public-context', () => ({
-  useGlobalPublicStore: (selector: (state: { systemFeatures: typeof mockSystemFeatures }) => unknown) =>
-    selector({ systemFeatures: mockSystemFeatures }),
-}))
+const render = (ui: ReactElement) =>
+  renderWithSystemFeatures(ui, { systemFeatures: mockSystemFeatures })
 
 vi.mock('@/app/components/base/icons/src/vender/solid/files', () => ({
   FileZip: () => <span data-testid="file-zip-icon">file</span>,
@@ -56,16 +59,25 @@ vi.mock('@langgenius/dify-ui/dropdown-menu', async () => {
     DropdownMenu: ({
       open,
       onOpenChange,
+      modal,
       children,
     }: {
-      open: boolean
+      open?: boolean
       onOpenChange?: (open: boolean) => void
+      modal?: boolean
       children: React.ReactNode
     }) => {
-      portalOpen = open
+      const [internalOpen, setInternalOpen] = React.useState(open ?? false)
+      const isOpen = open ?? internalOpen
+      const setOpen = (nextOpen: boolean) => {
+        if (open === undefined)
+          setInternalOpen(nextOpen)
+        onOpenChange?.(nextOpen)
+      }
+
       return (
-        <DropdownMenuContext value={{ isOpen: open, setOpen: onOpenChange ?? vi.fn() }}>
-          <div data-testid="dropdown-menu" data-open={open}>{children}</div>
+        <DropdownMenuContext value={{ isOpen, setOpen }}>
+          <div data-testid="dropdown-menu" data-open={isOpen} data-modal={modal}>{children}</div>
         </DropdownMenuContext>
       )
     },
@@ -93,7 +105,10 @@ vi.mock('@langgenius/dify-ui/dropdown-menu', async () => {
       children,
     }: {
       children: React.ReactNode
-    }) => portalOpen ? <div data-testid="dropdown-content">{children}</div> : null,
+    }) => {
+      const { isOpen } = useDropdownMenuContext()
+      return isOpen ? <div data-testid="dropdown-content">{children}</div> : null
+    },
     DropdownMenuItem: ({
       children,
       onClick,
@@ -144,7 +159,6 @@ vi.mock('@/app/components/plugins/install-plugin/install-from-local-package', ()
 describe('InstallPluginDropdown', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    portalOpen = false
     mockSystemFeatures.enable_marketplace = true
     mockSystemFeatures.plugin_installation_permission.restrict_to_marketplace_only = false
   })
@@ -154,6 +168,7 @@ describe('InstallPluginDropdown', () => {
 
     fireEvent.click(screen.getByTestId('dropdown-trigger'))
 
+    expect(screen.getByTestId('dropdown-menu')).toHaveAttribute('data-modal', 'false')
     expect(screen.getByText('plugin.installFrom')).toBeInTheDocument()
     expect(screen.getByText('plugin.source.marketplace')).toBeInTheDocument()
     expect(screen.getByText('plugin.source.github')).toBeInTheDocument()
@@ -195,6 +210,7 @@ describe('InstallPluginDropdown', () => {
     const { container } = render(<InstallPluginDropdown onSwitchToMarketplaceTab={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('dropdown-trigger'))
+    fireEvent.click(screen.getByText('plugin.source.local'))
     fireEvent.change(container.querySelector('input[type="file"]')!, {
       target: {
         files: [new File(['content'], 'plugin.difypkg')],
@@ -231,6 +247,7 @@ describe('InstallPluginDropdown', () => {
     const { container } = render(<InstallPluginDropdown onSwitchToMarketplaceTab={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('dropdown-trigger'))
+    fireEvent.click(screen.getByText('plugin.source.local'))
     fireEvent.change(container.querySelector('input[type="file"]')!, {
       target: {
         files: [new File(['content'], 'plugin.difypkg')],
