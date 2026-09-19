@@ -42,15 +42,16 @@ from controllers.openapi._models import (
     DeviceMutateRequest,
     DeviceMutateResponse,
     DevicePollRequest,
+    DeviceTokenResponse,
     WorkspacePayload,
 )
 from extensions.ext_database import db
 from extensions.ext_redis import redis_client
 from libs.helper import extract_remote_ip
-from libs.oauth_bearer import MINTABLE_PROFILES, SubjectType, bearer_feature_required
+from libs.oauth_bearer import SubjectType, TokenType, bearer_feature_required
 from libs.rate_limit import (
-    LIMIT_APPROVE_CONSOLE,
     LIMIT_DEVICE_CODE_PER_IP,
+    LIMIT_DEVICE_FLOW_APPROVE,
     LIMIT_LOOKUP_PUBLIC,
     rate_limit,
 )
@@ -69,7 +70,6 @@ from services.oauth_device_flow import (
     mint_oauth_token,
     oauth_ttl_days,
 )
-from services.openapi.mint_policy import MintPolicyViolation, validate_mint_policy
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,7 @@ class OAuthDeviceTokenApi(Resource):
     """RFC 8628 poll."""
 
     @openapi_ns.expect(openapi_ns.models[DevicePollRequest.__name__])
+    @openapi_ns.response(200, "Device token", openapi_ns.models[DeviceTokenResponse.__name__])
     def post(self):
         payload = _validate_json(DevicePollRequest)
         device_code = payload.device_code
@@ -210,7 +211,7 @@ class DeviceApproveApi(Resource):
     @login_required
     @account_initialization_required
     @bearer_feature_required
-    @rate_limit(LIMIT_APPROVE_CONSOLE)
+    @rate_limit(LIMIT_DEVICE_FLOW_APPROVE)
     @with_current_user
     @with_current_tenant_id
     def post(self, tenant: str, account: Account):
@@ -234,26 +235,17 @@ class DeviceApproveApi(Resource):
             return {"error": "approve_in_progress"}, 409
 
         try:
-            profile = MINTABLE_PROFILES[SubjectType.ACCOUNT]
-            try:
-                validate_mint_policy(
-                    subject_type=profile.subject_type,
-                    prefix=profile.prefix,
-                    scopes=profile.scopes,
-                )
-            except MintPolicyViolation as e:
-                raise BadRequest(description=str(e)) from None
             ttl_days = oauth_ttl_days(tenant_id=tenant)
             mint = mint_oauth_token(
-                db.session,
                 redis_client,
                 subject_email=account.email,
                 subject_issuer=ACCOUNT_ISSUER_SENTINEL,
                 account_id=str(account.id),
                 client_id=state.client_id,
                 device_label=state.device_label,
-                prefix=profile.prefix,
+                token_type=TokenType.OAUTH_ACCOUNT,
                 ttl_days=ttl_days,
+                session=db.session(),
             )
 
             poll_payload = _build_account_poll_payload(account, tenant, mint)
@@ -287,7 +279,7 @@ class DeviceDenyApi(Resource):
     @login_required
     @account_initialization_required
     @bearer_feature_required
-    @rate_limit(LIMIT_APPROVE_CONSOLE)
+    @rate_limit(LIMIT_DEVICE_FLOW_APPROVE)
     def post(self):
         payload = _validate_json(DeviceMutateRequest)
         user_code = payload.user_code.strip().upper()
@@ -340,7 +332,7 @@ def _audit_cross_ip_if_needed(state) -> None:
 
 
 def _build_account_poll_payload(account, tenant, mint) -> PollPayload:
-    rows = TenantService.get_workspaces_for_account(db.session, str(account.id))
+    rows = TenantService.get_workspaces_for_account(str(account.id), session=db.session())
     workspaces = [WorkspacePayload(id=str(t.id), name=t.name, role=getattr(m, "role", "")) for t, m in rows]
     # Prefer active session tenant → DB-flagged current join → first membership.
     default_ws_id = None

@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock, patch
+from inspect import unwrap
+from unittest.mock import patch
 
 from flask import Flask
 
@@ -6,12 +7,12 @@ from controllers.console.workspace.agent_providers import (
     AgentProviderApi,
     AgentProviderListApi,
 )
+from models.account import Account
+from tests.unit_tests.model_factories import make_account
 
 
-def unwrap(func):
-    while hasattr(func, "__wrapped__"):
-        func = func.__wrapped__
-    return func
+def _account() -> Account:
+    return make_account(account_id="user1", name="Agent Provider Tester", email="agent-provider@example.com")
 
 
 class TestAgentProviderListApi:
@@ -19,7 +20,7 @@ class TestAgentProviderListApi:
         api = AgentProviderListApi()
         method = unwrap(api.get)
 
-        user = MagicMock(id="user1")
+        user = _account()
         tenant_id = "tenant1"
         providers = [{"name": "openai"}, {"name": "anthropic"}]
 
@@ -38,7 +39,7 @@ class TestAgentProviderListApi:
         api = AgentProviderListApi()
         method = unwrap(api.get)
 
-        user = MagicMock(id="user1")
+        user = _account()
         tenant_id = "tenant1"
 
         with (
@@ -58,7 +59,7 @@ class TestAgentProviderApi:
         api = AgentProviderApi()
         method = unwrap(api.get)
 
-        user = MagicMock(id="user1")
+        user = _account()
         tenant_id = "tenant1"
         provider_name = "openai"
         provider_data = {"name": "openai", "models": ["gpt-4"]}
@@ -78,7 +79,7 @@ class TestAgentProviderApi:
         api = AgentProviderApi()
         method = unwrap(api.get)
 
-        user = MagicMock(id="user1")
+        user = _account()
         tenant_id = "tenant1"
         provider_name = "unknown"
 

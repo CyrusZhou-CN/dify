@@ -2,7 +2,7 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, cast, override
 
 import wandb
 import weave
@@ -75,9 +75,10 @@ class WeaveDataTrace(BaseTraceInstance):
             project_url = f"https://wandb.ai/{project_identifier}"
             return project_url
         except Exception as e:
-            logger.debug("Weave get run url failed: %s", str(e))
+            logger.debug("Weave get run url failed", exc_info=True)
             raise ValueError(f"Weave get run url failed: {str(e)}")
 
+    @override
     def trace(self, trace_info: BaseTraceInfo):
         logger.debug("Trace info: %s", trace_info)
         match trace_info:
@@ -158,6 +159,7 @@ class WeaveDataTrace(BaseTraceInstance):
 
         workflow_node_execution_repository = DifyCoreRepositoryFactory.create_workflow_node_execution_repository(
             session_factory=session_factory,
+            tenant_id=trace_info.tenant_id,
             user=service_account,
             app_id=app_id,
             triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
@@ -431,7 +433,7 @@ class WeaveDataTrace(BaseTraceInstance):
                 logger.info("Weave login successful")
                 return True
         except Exception as e:
-            logger.debug("Weave API check failed: %s", str(e))
+            logger.debug("Weave API check failed", exc_info=True)
             raise ValueError(f"Weave API check failed: {str(e)}")
 
     def _normalize_time(self, dt: datetime | None) -> datetime:

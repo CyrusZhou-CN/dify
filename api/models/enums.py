@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import override
 
 from core.trigger.constants import (
     TRIGGER_PLUGIN_NODE_TYPE,
@@ -12,6 +13,7 @@ class CreatorUserRole(StrEnum):
     END_USER = "end_user"
 
     @classmethod
+    @override
     def _missing_(cls, value):
         if value == "end-user":
             return cls.END_USER
@@ -203,6 +205,17 @@ class InvokeFrom(StrEnum):
         return source_mapping.get(self, "dev")
 
 
+class EndUserType(StrEnum):
+    """Persisted type values for the ``end_users.type`` column."""
+
+    APP_DEPLOY = "app-deploy"
+    BROWSER = "browser"
+    MCP = "mcp"
+    OPENAPI = "openapi"
+    SERVICE_API = "service-api"
+    TRIGGER = "trigger"
+
+
 class DocumentDocType(StrEnum):
     """Document doc_type classification"""
 
@@ -224,6 +237,8 @@ class TagType(StrEnum):
 
     KNOWLEDGE = "knowledge"
     APP = "app"
+    SNIPPET = "snippet"
+    SKILL = "skill"
 
 
 class DatasetMetadataType(StrEnum):

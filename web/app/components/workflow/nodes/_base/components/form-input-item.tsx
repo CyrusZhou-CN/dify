@@ -1,15 +1,28 @@
 'use client'
+
 import type { FC } from 'react'
 import type { ResourceVarInputs } from '../types'
-import type { CredentialFormSchema, FormOption, FormTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import type {
+  CredentialFormSchema,
+  FormOption,
+  FormTypeEnum,
+} from '@/app/components/header/account-setting/model-provider-page/declarations'
 import type { Event, Tool } from '@/app/components/tools/types'
 import type { TriggerWithProvider } from '@/app/components/workflow/block-selector/types'
 import type { ToolWithProvider, ValueSelector, Var } from '@/app/components/workflow/types'
 import { cn } from '@langgenius/dify-ui/cn'
-import { Select, SelectContent, SelectItem, SelectItemIndicator, SelectItemText, SelectTrigger } from '@langgenius/dify-ui/select'
+import { NumberField, NumberFieldGroup, NumberFieldInput } from '@langgenius/dify-ui/number-field'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectItemIndicator,
+  SelectItemText,
+  SelectTrigger,
+} from '@langgenius/dify-ui/select'
+import { useSuspenseQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { CheckboxList } from '@/app/components/base/checkbox-list'
-import Input from '@/app/components/base/input'
 import { useLanguage } from '@/app/components/header/account-setting/model-provider-page/hooks'
 import { AppSelector } from '@/app/components/plugins/plugin-detail-panel/app-selector'
 import ModelParameterModal from '@/app/components/plugins/plugin-detail-panel/model-selector'
@@ -17,7 +30,10 @@ import { PluginCategoryEnum } from '@/app/components/plugins/types'
 import VarReferencePicker from '@/app/components/workflow/nodes/_base/components/variable/var-reference-picker'
 import useAvailableVarList from '@/app/components/workflow/nodes/_base/hooks/use-available-var-list'
 import MixedVariableTextInput from '@/app/components/workflow/nodes/tool/components/mixed-variable-text-input'
+import ToolDatePicker from '@/app/components/workflow/nodes/tool/components/tool-date-picker'
+import ToolDateRangePicker from '@/app/components/workflow/nodes/tool/components/tool-date-range-picker'
 import { VarType } from '@/app/components/workflow/types'
+import { userProfileQueryOptions } from '@/features/account-profile/client'
 import { useFetchDynamicOptions } from '@/service/use-plugins'
 import { useTriggerPluginDynamicOptions } from '@/service/use-triggers'
 import { VarKindType } from '../types'
@@ -28,21 +44,18 @@ import {
   getCheckboxListValue,
   getFilterVar,
   getFormInputState,
-  getNumberInputValue,
   getSelectedLabels,
   getTargetVarType,
   getVarKindType,
   mapSelectItems,
   normalizeVariableSelectorValue,
 } from './form-input-item.helpers'
-import {
-  JsonEditorField,
-  MultiSelectField,
-} from './form-input-item.sections'
+import { JsonEditorField, MultiSelectField } from './form-input-item.sections'
 import FormInputTypeSwitch from './form-input-type-switch'
 
-type Props = {
+type Props = Readonly<{
   readOnly: boolean
+  labelId?: string
   nodeId: string
   schema: CredentialFormSchema
   value: ResourceVarInputs
@@ -53,14 +66,22 @@ type Props = {
   showManageInputField?: boolean
   onManageInputField?: () => void
   extraParams?: Record<string, unknown>
-  providerType?: string
+  providerType?: 'tool' | 'trigger'
   disableVariableInsertion?: boolean
-}
+}>
 
-type FormInputValue = string | number | boolean | string[] | Record<string, unknown> | null | undefined
+type FormInputValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | Record<string, unknown>
+  | null
+  | undefined
 
 const FormInputItem: FC<Props> = ({
   readOnly,
+  labelId,
   nodeId,
   schema,
   value,
@@ -72,17 +93,26 @@ const FormInputItem: FC<Props> = ({
   extraParams,
   providerType,
   disableVariableInsertion = false,
+  inPanel,
 }) => {
   const language = useLanguage()
+  const { data: userProfile } = useSuspenseQuery({
+    ...userProfileQueryOptions(),
+    select: (data) => data.profile,
+  })
+  const timezone = userProfile.timezone ?? 'UTC'
   const [toolsOptions, setToolsOptions] = useState<FormOption[] | null>(null)
   const [isLoadingToolsOptions, setIsLoadingToolsOptions] = useState(false)
 
-  const formState = getFormInputState(schema as CredentialFormSchema & {
-    _type?: FormTypeEnum
-    multiple?: boolean
-    options?: FormOption[]
-    scope?: string
-  }, value[schema.variable])
+  const formState = getFormInputState(
+    schema as CredentialFormSchema & {
+      _type?: FormTypeEnum
+      multiple?: boolean
+      options?: FormOption[]
+      scope?: string
+    },
+    value[schema.variable],
+  )
 
   const {
     defaultValue,
@@ -90,6 +120,8 @@ const FormInputItem: FC<Props> = ({
     isBoolean,
     isCheckbox,
     isConstant,
+    isDate,
+    isDateRange,
     isDynamicSelect,
     isModelSelector,
     isMultipleSelect,
@@ -124,38 +156,48 @@ const FormInputItem: FC<Props> = ({
   )
 
   // Fetch dynamic options hook for triggers
-  const { data: triggerDynamicOptions, isLoading: isTriggerOptionsLoading } = useTriggerPluginDynamicOptions({
-    plugin_id: currentProvider?.plugin_id || '',
-    provider: currentProvider?.name || '',
-    action: currentTool?.name || '',
-    parameter: variable || '',
-    extra: extraParams,
-    credential_id: currentProvider?.credential_id || '',
-  }, isDynamicSelect && providerType === PluginCategoryEnum.trigger && !!currentTool && !!currentProvider)
+  const { data: triggerDynamicOptions, isLoading: isTriggerOptionsLoading } =
+    useTriggerPluginDynamicOptions(
+      {
+        plugin_id: currentProvider?.plugin_id || '',
+        provider: currentProvider?.name || '',
+        action: currentTool?.name || '',
+        parameter: variable || '',
+        extra: extraParams,
+        credential_id: currentProvider?.credential_id || '',
+      },
+      isDynamicSelect &&
+        providerType === PluginCategoryEnum.trigger &&
+        !!currentTool &&
+        !!currentProvider,
+    )
 
   // Computed values for dynamic options (unified for triggers and tools)
   const triggerOptions = triggerDynamicOptions?.options
-  const dynamicOptions = providerType === PluginCategoryEnum.trigger
-    ? triggerOptions ?? toolsOptions
-    : toolsOptions
-  const isLoadingOptions = providerType === PluginCategoryEnum.trigger
-    ? (isTriggerOptionsLoading || isLoadingToolsOptions)
-    : isLoadingToolsOptions
+  const dynamicOptions =
+    providerType === PluginCategoryEnum.trigger ? (triggerOptions ?? toolsOptions) : toolsOptions
+  const isLoadingOptions =
+    providerType === PluginCategoryEnum.trigger
+      ? isTriggerOptionsLoading || isLoadingToolsOptions
+      : isLoadingToolsOptions
 
   // Fetch dynamic options for tools only (triggers use hook directly)
   useEffect(() => {
     const fetchPanelDynamicOptions = async () => {
-      if (isDynamicSelect && currentTool && currentProvider && (providerType === PluginCategoryEnum.tool || providerType === PluginCategoryEnum.trigger)) {
+      if (
+        isDynamicSelect &&
+        currentTool &&
+        currentProvider &&
+        (providerType === PluginCategoryEnum.tool || providerType === PluginCategoryEnum.trigger)
+      ) {
         setIsLoadingToolsOptions(true)
         try {
           const data = await fetchDynamicOptions()
           setToolsOptions(data?.options || [])
-        }
-        catch (error) {
+        } catch (error) {
           console.error('Failed to fetch dynamic options:', error)
           setToolsOptions([])
-        }
-        finally {
+        } finally {
           setIsLoadingToolsOptions(false)
         }
       }
@@ -182,8 +224,7 @@ const FormInputItem: FC<Props> = ({
           value: '',
         },
       })
-    }
-    else {
+    } else {
       onChange({
         ...value,
         [variable]: {
@@ -202,7 +243,7 @@ const FormInputItem: FC<Props> = ({
       [variable]: {
         ...varInput,
         type: nextType,
-        value: isNumber ? Number.parseFloat(String(newValue ?? '')) : newValue,
+        value: newValue,
       },
     })
   }
@@ -243,10 +284,7 @@ const FormInputItem: FC<Props> = ({
     [availableCheckboxOptions, defaultValue, varInput?.value],
   )
 
-  const visibleSelectOptions = useMemo(
-    () => filterVisibleOptions(options, value),
-    [options, value],
-  )
+  const visibleSelectOptions = useMemo(() => filterVisibleOptions(options, value), [options, value])
   const visibleDynamicOptions = useMemo(
     () => filterVisibleOptions(dynamicOptions || options || [], value),
     [dynamicOptions, options, value],
@@ -260,7 +298,12 @@ const FormInputItem: FC<Props> = ({
     [language, visibleDynamicOptions],
   )
   const selectedLabels = useMemo(
-    () => getSelectedLabels(varInput?.value as string[] | undefined, isDynamicSelect ? visibleDynamicOptions : visibleSelectOptions, language),
+    () =>
+      getSelectedLabels(
+        varInput?.value as string[] | undefined,
+        isDynamicSelect ? visibleDynamicOptions : visibleSelectOptions,
+        language,
+      ),
     [isDynamicSelect, language, varInput?.value, visibleDynamicOptions, visibleSelectOptions],
   )
 
@@ -274,18 +317,24 @@ const FormInputItem: FC<Props> = ({
       },
     })
   }
-  const selectedStaticOption = staticSelectItems.find(item => item.value === (varInput?.value as string | undefined)) ?? null
-  const selectedDynamicOption = dynamicSelectItems.find(item => item.value === (varInput?.value as string | undefined)) ?? null
+  const selectedStaticOption =
+    staticSelectItems.find((item) => item.value === (varInput?.value as string | undefined)) ?? null
+  const selectedDynamicOption =
+    dynamicSelectItems.find((item) => item.value === (varInput?.value as string | undefined)) ??
+    null
 
   return (
     <div className={cn('gap-1', !(isShowJSONEditor && isConstant) && 'flex')}>
       {showTypeSwitch && (
-        <FormInputTypeSwitch value={varInput?.type || VarKindType.constant} onChange={handleTypeChange} />
+        <FormInputTypeSwitch
+          value={varInput?.type || VarKindType.constant}
+          onChange={handleTypeChange}
+        />
       )}
       {isString && (
         <MixedVariableTextInput
           readOnly={readOnly}
-          value={varInput?.value as string || ''}
+          value={(varInput?.value as string) || ''}
           onChange={handleValueChange}
           nodesOutputVars={availableVars}
           availableNodes={availableNodesWithParent}
@@ -295,13 +344,42 @@ const FormInputItem: FC<Props> = ({
         />
       )}
       {isNumber && isConstant && (
-        <Input
-          className="h-8 grow"
-          type="number"
-          value={getNumberInputValue(varInput?.value)}
-          onChange={e => handleValueChange(e.target.value)}
-          placeholder={placeholder?.[language] || placeholder?.en_US}
-        />
+        <NumberField
+          step="any"
+          className="min-w-0 grow"
+          value={varInput?.value == null || varInput.value === '' ? null : Number(varInput.value)}
+          readOnly={readOnly}
+          onValueChange={(value) => handleValueChange(value)}
+        >
+          <NumberFieldGroup>
+            <NumberFieldInput
+              aria-labelledby={labelId}
+              placeholder={placeholder?.[language] || placeholder?.en_US}
+            />
+          </NumberFieldGroup>
+        </NumberField>
+      )}
+      {isDate && isConstant && (
+        <div className="min-w-0 grow">
+          <ToolDatePicker
+            value={varInput?.value}
+            onChange={handleValueChange}
+            timezone={timezone}
+            readOnly={readOnly}
+            placeholder={placeholder?.[language] || placeholder?.en_US}
+          />
+        </div>
+      )}
+      {isDateRange && varInput?.type !== VarKindType.variable && (
+        <div className="min-w-0 grow">
+          <ToolDateRangePicker
+            value={varInput?.value}
+            onChange={handleValueChange}
+            readOnly={readOnly}
+            timezone={timezone}
+            inPanel={inPanel}
+          />
+        </div>
       )}
       {isCheckbox && isConstant && (
         <CheckboxList
@@ -315,26 +393,21 @@ const FormInputItem: FC<Props> = ({
         />
       )}
       {isBoolean && isConstant && (
-        <FormInputBoolean
-          value={varInput?.value as boolean}
-          onChange={handleValueChange}
-        />
+        <FormInputBoolean value={varInput?.value as boolean} onChange={handleValueChange} />
       )}
       {isSelect && isConstant && !isMultipleSelect && (
         <Select
           value={selectedStaticOption?.value ?? null}
           disabled={readOnly}
-          onValueChange={value => value && handleValueChange(value)}
+          onValueChange={(value) => value && handleValueChange(value)}
         >
-          <SelectTrigger className="h-8 grow">
+          <SelectTrigger className="h-8 min-w-0 grow">
             {selectedStaticOption?.name ?? placeholder?.[language] ?? placeholder?.en_US}
           </SelectTrigger>
           <SelectContent>
-            {staticSelectItems.map(item => (
+            {staticSelectItems.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.icon && (
-                  <img src={item.icon} alt="" className="mr-2 size-4 shrink-0" />
-                )}
+                {item.icon && <img src={item.icon} alt="" className="mr-2 size-4 shrink-0" />}
                 <SelectItemText>{item.name}</SelectItemText>
                 <SelectItemIndicator />
               </SelectItem>
@@ -356,17 +429,16 @@ const FormInputItem: FC<Props> = ({
         <Select
           value={selectedDynamicOption?.value ?? null}
           disabled={readOnly || isLoadingOptions}
-          onValueChange={value => value && handleValueChange(value)}
+          onValueChange={(value) => value && handleValueChange(value)}
         >
-          <SelectTrigger className="h-8 grow">
-            {selectedDynamicOption?.name ?? (isLoadingOptions ? 'Loading...' : (placeholder?.[language] ?? placeholder?.en_US))}
+          <SelectTrigger className="h-8 min-w-0 grow">
+            {selectedDynamicOption?.name ??
+              (isLoadingOptions ? 'Loading...' : (placeholder?.[language] ?? placeholder?.en_US))}
           </SelectTrigger>
           <SelectContent>
-            {dynamicSelectItems.map(item => (
+            {dynamicSelectItems.map((item) => (
               <SelectItem key={item.value} value={item.value}>
-                {item.icon && (
-                  <img src={item.icon} alt="" className="mr-2 size-4 shrink-0" />
-                )}
+                {item.icon && <img src={item.icon} alt="" className="mr-2 size-4 shrink-0" />}
                 <SelectItemText>{item.name}</SelectItemText>
                 <SelectItemIndicator />
               </SelectItem>
@@ -389,7 +461,9 @@ const FormInputItem: FC<Props> = ({
         <JsonEditorField
           value={(varInput?.value as string) || ''}
           onChange={handleValueChange}
-          placeholder={<div className="whitespace-pre">{placeholder?.[language] || placeholder?.en_US}</div>}
+          placeholder={
+            <div className="whitespace-pre">{placeholder?.[language] || placeholder?.en_US}</div>
+          }
         />
       )}
       {isAppSelector && (
@@ -418,7 +492,7 @@ const FormInputItem: FC<Props> = ({
           isShowNodeName
           nodeId={nodeId}
           value={varInput?.value || []}
-          onChange={value => handleVariableSelectorChange(value, variable)}
+          onChange={(value) => handleVariableSelectorChange(value, variable)}
           filterVar={getFilterVar(formState)}
           schema={schema}
           valueTypePlaceHolder={getTargetVarType(formState)}

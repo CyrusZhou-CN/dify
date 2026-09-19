@@ -2,7 +2,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta
-from typing import cast
+from typing import cast, override
 
 from langsmith import Client
 from langsmith.schemas import RunBase
@@ -47,6 +47,7 @@ class LangSmithDataTrace(BaseTraceInstance):
         self.langsmith_client = Client(api_key=langsmith_config.api_key, api_url=langsmith_config.endpoint)
         self.file_base_url = os.getenv("FILES_URL", "http://127.0.0.1:5001")
 
+    @override
     def trace(self, trace_info: BaseTraceInfo):
         match trace_info:
             case WorkflowTraceInfo():
@@ -153,6 +154,7 @@ class LangSmithDataTrace(BaseTraceInstance):
 
         workflow_node_execution_repository = DifyCoreRepositoryFactory.create_workflow_node_execution_repository(
             session_factory=session_factory,
+            tenant_id=trace_info.tenant_id,
             user=service_account,
             app_id=app_id,
             triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
@@ -507,7 +509,7 @@ class LangSmithDataTrace(BaseTraceInstance):
             self.langsmith_client.delete_project(project_name=random_project_name)
             return True
         except Exception as e:
-            logger.debug("LangSmith API check failed: %s", str(e))
+            logger.debug("LangSmith API check failed", exc_info=True)
             raise ValueError(f"LangSmith API check failed: {str(e)}")
 
     def get_project_url(self):
@@ -526,5 +528,5 @@ class LangSmithDataTrace(BaseTraceInstance):
             )
             return project_url.split("/r/")[0]
         except Exception as e:
-            logger.debug("LangSmith get run url failed: %s", str(e))
+            logger.debug("LangSmith get run url failed", exc_info=True)
             raise ValueError(f"LangSmith get run url failed: {str(e)}")
