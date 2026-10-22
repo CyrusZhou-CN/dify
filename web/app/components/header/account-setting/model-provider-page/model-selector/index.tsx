@@ -1,3 +1,4 @@
+import type { Ref } from 'react'
 import type {
   ModelSelectorModel,
   ModelSelectorModelPredicate,
@@ -26,11 +27,15 @@ const getModelProviderPluginId = (provider: string) => {
 }
 
 type ModelSelectorBaseProps = {
+  triggerRef?: Ref<HTMLButtonElement>
+  'aria-labelledby'?: string
   value?: ModelSelectorValue
   models: ModelSelectorProvider[]
   className?: string
   popupClassName?: string
   onValueChange?: (model: ModelSelectorValue) => void
+  onClear?: () => void
+  clearLabel?: string
   onHide?: () => void
   disabled?: boolean
   loading?: boolean
@@ -52,11 +57,15 @@ type SplitModelSelectorProps = ModelSelectorBaseProps & {
 }
 
 function ModelSelectorRoot({
+  triggerRef,
+  'aria-labelledby': labelledBy,
   value,
   models,
   className,
   popupClassName,
   onValueChange,
+  onClear,
+  clearLabel,
   onHide,
   disabled,
   loading,
@@ -76,7 +85,7 @@ function ModelSelectorRoot({
   surface: 'default' | 'workflow'
   shape: 'standalone' | 'split'
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['plugin'])
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [settingsDestination, setSettingsDestination] = useQueryState(
@@ -139,9 +148,13 @@ function ModelSelectorRoot({
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <ModelSelectorTrigger
+        ref={triggerRef}
+        aria-labelledby={labelledBy}
         currentProvider={currentProvider}
         currentModel={currentModel}
         defaultModel={value}
+        onClear={onClear}
+        clearLabel={clearLabel}
         disabled={disabled || loading}
         loading={loading}
         size={size}

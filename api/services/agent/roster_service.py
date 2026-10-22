@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Sequence
-from typing import Any, TypedDict
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
@@ -12,6 +12,7 @@ from core.app.entities.app_invoke_entities import InvokeFrom
 from libs.datetime_utils import naive_utc_now
 from libs.helper import to_timestamp
 from models.agent import (
+    AGENT_APP_VERSION_OPERATIONS,
     APP_BACKED_AGENT_SOURCES,
     WORKFLOW_ONLY_AGENT_SOURCES,
     Agent,
@@ -43,6 +44,7 @@ from services.agent.errors import (
     AgentVersionNotFoundError,
 )
 from services.agent.workspace_service import AgentWorkspaceNotFoundError, AgentWorkspaceService, WorkspaceOwnerScope
+from services.app.agent_app_contracts import AgentReferencingWorkflow
 from services.app_service import AppService, CreateAppParams
 from services.enterprise.enterprise_service import EnterpriseService
 from services.entities.agent_entities import RosterAgentCreatePayload, RosterAgentUpdatePayload
@@ -51,21 +53,6 @@ from services.system_feature_service import SystemFeatureService
 from tasks.collect_agent_resources_task import enqueue_agent_resource_collection
 
 logger = logging.getLogger(__name__)
-
-
-class AgentReferencingWorkflow(TypedDict):
-    """A workflow app that references a roster Agent via an Agent node."""
-
-    app_id: str
-    app_name: str
-    app_icon_type: str | None
-    app_icon: str | None
-    app_icon_background: str | None
-    app_mode: str
-    app_updated_at: int | None
-    workflow_id: str
-    workflow_version: str
-    node_ids: list[str]
 
 
 class AgentRosterService:
@@ -409,10 +396,9 @@ class AgentRosterService:
 
         Unlike :meth:`create_roster_agent`, this does not commit: the caller
         (``AppService.create_app``) owns the surrounding transaction so the App
-        row and its backing Agent are persisted atomically. A default (empty)
-        Agent Soul is seeded; the user configures model/prompt/tools afterward in
-        the Composer. Importers may provide a portable Soul and provenance while
-        retaining the same one-App-to-one-Agent transaction boundary.
+        row and its backing Agent are persisted atomically. The caller supplies
+        the initial Agent Soul, or an empty one is seeded. Importers may provide
+        a portable Soul and provenance while retaining the same transaction boundary.
         """
         soul = initial_soul or AgentSoulConfig()
         agent = Agent(
@@ -1003,7 +989,7 @@ class AgentRosterService:
     def _get_runtime_resolvable_agent(self, *, tenant_id: str, agent_id: str) -> Agent | None:
         """Load an Agent that is eligible to resolve to a runtime backing App.
 
-        Shared by the runtime resolver and the read-only authorization resolver
+        Shared by the runtime resolvers and the read-only authorization resolver
         so both agree on what counts as a resolvable Agent.
         """
 
@@ -1043,6 +1029,20 @@ class AgentRosterService:
             return None
         return agent.app_id
 
+    def get_existing_agent_runtime_app_model(self, *, tenant_id: str, agent_id: str) -> App:
+        """Resolve an existing runtime App without creating or committing state.
+
+        Workflow-only Agents must already have a hidden backing App. Their
+        parent workflow App must never stand in for a missing runtime App.
+        """
+        agent = self._get_runtime_resolvable_agent(tenant_id=tenant_id, agent_id=agent_id)
+        if agent is None:
+            raise AgentNotFoundError()
+        app_id = agent.backing_app_id if agent.scope == AgentScope.WORKFLOW_ONLY else self.runtime_backing_app_id(agent)
+        if not app_id:
+            raise AgentNotFoundError()
+        return self._get_runtime_app_model_by_id(tenant_id=tenant_id, app_id=app_id)
+
     def get_agent_runtime_app_model(self, *, tenant_id: str, agent_id: str) -> App:
         """Resolve the App that backs an Agent runtime surface.
 
@@ -1065,11 +1065,14 @@ class AgentRosterService:
         if should_commit_backing_app:
             self._session.commit()
 
+        return self._get_runtime_app_model_by_id(tenant_id=tenant_id, app_id=backing_app_id)
+
+    def _get_runtime_app_model_by_id(self, *, tenant_id: str, app_id: str) -> App:
         app = self._session.scalar(
             select(App)
             .where(
                 App.tenant_id == tenant_id,
-                App.id == backing_app_id,
+                App.id == app_id,
                 App.mode == AppMode.AGENT,
                 App.status == AppStatus.NORMAL,
             )
@@ -1306,12 +1309,7 @@ class AgentRosterService:
         if agent.source == AgentSource.AGENT_APP or (
             agent.source == AgentSource.IMPORTED and agent.scope == AgentScope.ROSTER and agent.app_id
         ):
-            operations = {
-                AgentConfigRevisionOperation.PUBLISH_DRAFT,
-                AgentConfigRevisionOperation.SAVE_NEW_VERSION,
-                AgentConfigRevisionOperation.SAVE_TO_ROSTER,
-                AgentConfigRevisionOperation.RESTORE_VERSION,
-            }
+            operations = set(AGENT_APP_VERSION_OPERATIONS)
             if agent.source == AgentSource.IMPORTED:
                 operations.add(AgentConfigRevisionOperation.IMPORT_PACKAGE)
             return operations
@@ -1474,6 +1472,7 @@ class AgentRosterService:
             )
             .limit(1)
         )
+        config_snapshot = AgentSoulConfig.model_validate(version.config_snapshot_dict)
         if draft is None:
             draft = AgentConfigDraft(
                 tenant_id=tenant_id,
@@ -1483,11 +1482,13 @@ class AgentRosterService:
                 draft_owner_key="",
                 created_by=account_id,
                 home_snapshot_id=version.home_snapshot_id,
+                config_snapshot=config_snapshot,
             )
             self._session.add(draft)
+        else:
+            draft.config_snapshot = config_snapshot
         draft.base_snapshot_id = version.id
         draft.home_snapshot_id = version.home_snapshot_id
-        draft.config_snapshot = AgentSoulConfig.model_validate(version.config_snapshot_dict)
         draft.updated_by = account_id
         agent.active_config_is_published = version.id == agent.active_config_snapshot_id
         agent.updated_by = account_id

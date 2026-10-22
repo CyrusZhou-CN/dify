@@ -1,4 +1,4 @@
-import types
+from dataclasses import dataclass
 from unittest.mock import patch
 
 import pytest
@@ -11,18 +11,37 @@ from services.errors.app import QuotaExceededError
 from tests.unit_tests.model_factories import make_workflow
 
 
+class _RequestStub:
+    method = "POST"
+    headers = {"x-test": "1"}
+    args = {"a": "b"}
+
+
+@dataclass(eq=False, repr=False)
+class _AppScopedEndUserServicesStub:
+    commands: object
+
+
+class _ApplicationServicesStub:
+    def __init__(self, commands: object) -> None:
+        self.app_scoped_end_users = _AppScopedEndUserServicesStub(commands)
+
+
 @pytest.fixture(autouse=True)
 def mock_request():
-    module.request = types.SimpleNamespace(
-        method="POST",
-        headers={"x-test": "1"},
-        args={"a": "b"},
-    )
+    module.request = _RequestStub()
 
 
 @pytest.fixture(autouse=True)
 def mock_jsonify():
     module.jsonify = lambda payload: payload
+
+
+@pytest.fixture(autouse=True)
+def end_user_commands(monkeypatch: pytest.MonkeyPatch) -> object:
+    commands = object()
+    monkeypatch.setattr(module, "application_services", lambda: _ApplicationServicesStub(commands))
+    return commands
 
 
 def _webhook_trigger() -> WorkflowWebhookTrigger:
@@ -76,6 +95,7 @@ class TestHandleWebhook:
         mock_trigger,
         mock_extract,
         mock_get,
+        end_user_commands,
     ):
         mock_get.return_value = (_webhook_trigger(), _workflow(), "node_config")
         mock_extract.return_value = {"input": "x"}
@@ -86,6 +106,7 @@ class TestHandleWebhook:
         assert status == 200
         assert response["ok"] is True
         mock_trigger.assert_called_once()
+        assert mock_trigger.call_args.kwargs["end_users"] is end_user_commands
 
     @patch.object(module.WebhookService, "get_webhook_trigger_and_workflow")
     @patch.object(module.WebhookService, "extract_and_validate_webhook_data", side_effect=ValueError("bad"))
@@ -151,8 +172,9 @@ class TestHandleWebhook:
 
     @patch.object(module.WebhookService, "get_webhook_trigger_and_workflow", side_effect=ValueError("missing"))
     def test_value_error_not_found(self, mock_get):
-        with pytest.raises(NotFound):
-            module.handle_webhook("wh-1")
+        response = module.handle_webhook("wh-1")
+        assert response.status_code == 404
+        assert response.data == NotFound().get_body().encode()
 
     @patch.object(module.WebhookService, "get_webhook_trigger_and_workflow", side_effect=RequestEntityTooLarge())
     def test_request_entity_too_large(self, mock_get):
@@ -229,8 +251,9 @@ class TestHandleWebhookDebug:
 
     @patch.object(module.WebhookService, "get_webhook_trigger_and_workflow", side_effect=ValueError("missing"))
     def test_debug_not_found(self, mock_get):
-        with pytest.raises(NotFound):
-            module.handle_webhook_debug("wh-1")
+        response = module.handle_webhook_debug("wh-1")
+        assert response.status_code == 404
+        assert response.data == NotFound().get_body().encode()
 
     @patch.object(module.WebhookService, "get_webhook_trigger_and_workflow", side_effect=RequestEntityTooLarge())
     def test_debug_request_entity_too_large(self, mock_get):

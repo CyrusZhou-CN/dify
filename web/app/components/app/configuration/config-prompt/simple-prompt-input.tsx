@@ -1,9 +1,12 @@
 'use client'
+
 import type { FC } from 'react'
+import type { ConfigurationAppMode } from '@/app/components/app/configuration/hooks/configuration-lifecycle/types'
 import type { ExternalDataTool } from '@/models/common'
 import type { PromptVariable } from '@/models/debug'
 import type { GenRes } from '@/service/debug'
 import { cn } from '@langgenius/dify-ui/cn'
+import { Infotip, InfotipContent, InfotipTrigger } from '@langgenius/dify-ui/infotip'
 import { useBoolean } from 'ahooks'
 import { noop } from 'es-toolkit/function'
 import { produce } from 'immer'
@@ -16,7 +19,6 @@ import AutomaticBtn from '@/app/components/app/configuration/config/automatic/au
 import GetAutomaticResModal from '@/app/components/app/configuration/config/automatic/get-automatic-res'
 import { toast } from '@/app/components/app/configuration/toast'
 import { useFeaturesStore } from '@/app/components/base/features/hooks'
-import { Infotip } from '@/app/components/base/infotip'
 import PromptEditor from '@/app/components/base/prompt-editor'
 import { PROMPT_EDITOR_UPDATE_VALUE_BY_EVENT_EMITTER } from '@/app/components/base/prompt-editor/plugins/update-block'
 import { INSERT_VARIABLE_VALUE_BLOCK_COMMAND } from '@/app/components/base/prompt-editor/plugins/variable-block'
@@ -24,13 +26,12 @@ import ConfigContext from '@/context/debug-configuration'
 import { useEventEmitterContextContext } from '@/context/event-emitter'
 import { useModalContext } from '@/context/modal-context'
 import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
-import { AppModeEnum } from '@/types/app'
 import { getNewVar, getVars } from '@/utils/var'
 import ConfirmAddVar from './confirm-add-var'
 import PromptEditorHeightResizeWrap from './prompt-editor-height-resize-wrap'
 
 type ISimplePromptInput = {
-  mode: AppModeEnum
+  mode: ConfigurationAppMode
   promptTemplate: string
   promptVariables: PromptVariable[]
   readonly?: boolean
@@ -51,10 +52,10 @@ const Prompt: FC<ISimplePromptInput> = ({
   editorHeight: initEditorHeight,
   noResize,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['appDebug'])
   const titleId = useId()
   const title =
-    mode !== AppModeEnum.COMPLETION
+    mode !== 'completion'
       ? t(($) => $.chatSubTitle, { ns: 'appDebug' })
       : t(($) => $.completionSubTitle, { ns: 'appDebug' })
   const media = useBreakpoints()
@@ -66,6 +67,7 @@ const Prompt: FC<ISimplePromptInput> = ({
   const {
     appId,
     modelConfig,
+    modelModeType,
     dataSets,
     setModelConfig,
     setPrevPromptConfig,
@@ -176,7 +178,7 @@ const Prompt: FC<ISimplePromptInput> = ({
     setModelConfig(newModelConfig)
     setPrevPromptConfig(modelConfig.configs)
 
-    if (mode !== AppModeEnum.COMPLETION) {
+    if (mode !== 'completion') {
       setIntroduction(res.opening_statement || '')
       const newFeatures = produce(features, (draft) => {
         draft.opening = {
@@ -206,12 +208,11 @@ const Prompt: FC<ISimplePromptInput> = ({
                 {title}
               </h2>
               {!readonly && (
-                <Infotip
-                  aria-label={t(($) => $.promptTip, { ns: 'appDebug' })}
-                  className="ml-1"
-                  popupClassName="w-[180px]"
-                >
-                  {t(($) => $.promptTip, { ns: 'appDebug' })}
+                <Infotip>
+                  <InfotipTrigger aria-labelledby={titleId} className="ml-1" />
+                  <InfotipContent aria-labelledby={titleId} className="w-45">
+                    {t(($) => $.promptTip, { ns: 'appDebug', input: '{{input}}' })}
+                  </InfotipContent>
                 </Infotip>
               )}
             </div>
@@ -315,7 +316,7 @@ const Prompt: FC<ISimplePromptInput> = ({
       {showAutomatic && (
         <GetAutomaticResModal
           flowId={appId}
-          mode={mode as AppModeEnum}
+          modelMode={modelModeType}
           isShow={showAutomatic}
           onClose={showAutomaticFalse}
           onFinished={handleAutomaticRes}

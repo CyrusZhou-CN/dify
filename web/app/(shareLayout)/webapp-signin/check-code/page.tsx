@@ -1,5 +1,5 @@
 'use client'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { Button } from '@langgenius/dify-ui/button'
 import { Input } from '@langgenius/dify-ui/input'
 import { useEffect, useRef, useState } from 'react'
@@ -22,7 +22,7 @@ import { replaceLoginRedirect } from '@/utils/login-redirect.client'
 import { basePath } from '@/utils/var'
 
 export default function CheckCode() {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['login'])
   const router = useRouter()
   const searchParams = useSearchParams()
   const email = decodeURIComponent(searchParams.get('email') as string)
@@ -78,7 +78,7 @@ export default function CheckCode() {
     }
   }
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
     verify()
   }

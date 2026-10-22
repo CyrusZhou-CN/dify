@@ -30,7 +30,9 @@ from .agent import (
     WorkflowAgentBindingType,
     WorkflowAgentNodeBinding,
 )
+from .agent_sandbox_usage import AgentSandboxExecution, AgentSandboxUsageEvent
 from .api_based_extension import APIBasedExtension, APIBasedExtensionPoint
+from .application_trace import ApplicationTraceBatch, ApplicationTraceInvocation, ApplicationTraceRun
 from .comment import (
     WorkflowComment,
     WorkflowCommentMention,
@@ -113,6 +115,11 @@ from .provider import (
     TenantDefaultModel,
     TenantPreferredModelProvider,
 )
+from .resource_access_token import (
+    ResourceAccessToken,
+    ResourceAccessTokenRelation,
+    ResourceAccessTokenResourceType,
+)
 from .skill import AgentSkillBinding, Skill, SkillDraftFile, SkillFileKind, SkillFileStorage, SkillVersion
 from .snippet import CustomizedSnippet, SnippetType
 from .source import DataSourceApiKeyAuthBinding, DataSourceOauthBinding
@@ -171,6 +178,8 @@ __all__ = [
     "AgentHomeSnapshot",
     "AgentIconType",
     "AgentKind",
+    "AgentSandboxExecution",
+    "AgentSandboxUsageEvent",
     "AgentScope",
     "AgentSkillBinding",
     "AgentSource",
@@ -193,6 +202,9 @@ __all__ = [
     "AppTrigger",
     "AppTriggerStatus",
     "AppTriggerType",
+    "ApplicationTraceBatch",
+    "ApplicationTraceInvocation",
+    "ApplicationTraceRun",
     "BuiltinToolProvider",
     "CeleryTask",
     "CeleryTaskSet",
@@ -249,6 +261,9 @@ __all__ = [
     "ProviderQuotaType",
     "ProviderType",
     "RecommendedApp",
+    "ResourceAccessToken",
+    "ResourceAccessTokenRelation",
+    "ResourceAccessTokenResourceType",
     "SavedMessage",
     "Site",
     "Skill",

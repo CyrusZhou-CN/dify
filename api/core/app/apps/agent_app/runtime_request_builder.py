@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from agenton.compositor import CompositorSessionSnapshot
 from dify_agent.layers.execution_context import (
     DifyExecutionContextInvokeFrom,
     DifyExecutionContextLayerConfig,
@@ -25,7 +24,8 @@ from dify_agent.layers.user_prompt import (
     DifyUserPromptFileType,
     DifyUserPromptImageConfig,
 )
-from dify_agent.protocol import CreateRunRequest, DeferredToolResultsPayload
+from dify_agent.protocol import CreateRunRequest
+from dify_agent.protocol.snapshot import SessionSnapshot
 
 from clients.agent_backend import (
     AgentBackendAgentAppRunInput,
@@ -36,6 +36,7 @@ from clients.agent_backend import (
 from configs import dify_config
 from core.app.entities.app_invoke_entities import DifyRunContext, InvokeFrom
 from core.app.llm.model_access import resolve_model_context_window, resolve_model_supports_vision
+from core.ops.base_trace_instance import application_tracing_hooks
 from core.plugin.provider_identity import normalize_plugin_daemon_provider_identity
 from core.workflow.file_reference import build_file_reference, is_canonical_file_reference
 from core.workflow.nodes.agent_v2.dify_tools_builder import (
@@ -46,7 +47,6 @@ from core.workflow.nodes.agent_v2.dify_tools_builder import (
 )
 from core.workflow.nodes.agent_v2.runtime_request_builder import (
     append_runtime_warnings,
-    build_ask_human_layer_config,
     build_config_aware_soul_mention_resolver,
     build_config_layer_config,
     build_knowledge_layer_config,
@@ -58,8 +58,6 @@ from graphon.model_runtime.entities.message_entities import ImagePromptMessageCo
 from models.agent_config_entities import AgentSoulConfig, AgentSoulToolsConfig
 from models.provider_ids import ModelProviderID
 from services.agent.prompt_mentions import expand_prompt_mentions
-
-from .errors import AgentSessionSnapshotIncompatibleError
 
 
 class AgentAppRuntimeRequestBuildError(ValueError):
@@ -87,9 +85,7 @@ class AgentAppRuntimeBuildContext:
     files: tuple[File, ...] = ()
     image_detail_config: ImagePromptMessageContent.DETAIL | None = None
     agent_config_version_kind: Literal["snapshot", "draft", "build_draft"] = "snapshot"
-    session_snapshot: CompositorSessionSnapshot | None = None
-    # ENG-638: set when resuming a chat turn after a submitted ask_human form.
-    deferred_tool_results: DeferredToolResultsPayload | None = None
+    session_snapshot: SessionSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +168,7 @@ class AgentAppRuntimeRequestBuilder:
             image_detail_config=context.image_detail_config,
         )
 
+        tracing_hooks = application_tracing_hooks()
         request = self._request_builder.build_for_agent_app(
             AgentBackendAgentAppRunInput(
                 model=AgentBackendModelConfig(
@@ -193,6 +190,7 @@ class AgentAppRuntimeRequestBuilder:
                     user_from=cast(DifyExecutionContextUserFrom, context.dify_context.user_from.value),
                     invoke_from=cast(DifyExecutionContextInvokeFrom, context.dify_context.invoke_from.value),
                     agent_mode="agent_app",
+                    tracing=tracing_hooks.prepare_agent_app(context) if tracing_hooks is not None else None,
                 ),
                 backend_binding_ref=context.backend_binding_ref,
                 # ENG-616: expand slash-menu mention tokens to canonical names so
@@ -206,16 +204,13 @@ class AgentAppRuntimeRequestBuilder:
                 core_tools=tool_layers.core_tools,
                 knowledge=knowledge_config,
                 config_layer_config=config_layer_config,
-                ask_human_config=build_ask_human_layer_config(agent_soul),
                 include_shell=dify_config.AGENT_SHELL_ENABLED,
                 shell_config=build_shell_layer_config(agent_soul),
                 session_snapshot=context.session_snapshot,
-                deferred_tool_results=context.deferred_tool_results,
                 idempotency_key=context.idempotency_key,
                 metadata=metadata,
             )
         )
-        self._validate_session_snapshot_layers(request)
         redacted = cast(dict[str, Any], redact_for_agent_backend_log(request))
         return AgentAppRuntimeRequest(
             request=request,
@@ -244,24 +239,6 @@ class AgentAppRuntimeRequestBuilder:
             else _build_user_download(file)
             for file in files
         ]
-
-    @staticmethod
-    def _validate_session_snapshot_layers(request: CreateRunRequest) -> None:
-        """Reject stale snapshots before they reach the Agent backend.
-
-        Draft rows are updated in place, so their IDs cannot prove that a
-        retained snapshot still belongs to the current composition. Agenton
-        requires the ordered layer names to match exactly; enforce the same
-        invariant at the API boundary and return a product-level error.
-        """
-
-        snapshot = request.session_snapshot
-        if snapshot is None:
-            return
-        snapshot_layer_names = tuple(layer.name for layer in snapshot.layers)
-        composition_layer_names = tuple(layer.name for layer in request.composition.layers)
-        if snapshot_layer_names != composition_layer_names:
-            raise AgentSessionSnapshotIncompatibleError()
 
     def _build_tool_layers(
         self,

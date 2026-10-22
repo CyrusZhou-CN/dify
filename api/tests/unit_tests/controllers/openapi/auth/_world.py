@@ -12,10 +12,11 @@ from typing import NoReturn
 
 from sqlalchemy.orm import Session
 
+from constants.oauth_bearer import SubjectType, TokenType
 from controllers.openapi.auth.context import Context
 from controllers.openapi.auth.subjects import AccountSubject, ExternalSsoSubject, Subject
 from enums import DeploymentEdition
-from libs.oauth_bearer import AuthContext, SubjectType, TokenType
+from libs.oauth_bearer import AuthContext
 from models import Account, App, Tenant, TenantAccountJoin
 from models.account import AccountStatus, TenantAccountRole, TenantStatus
 from models.enums import AppStatus
@@ -64,13 +65,15 @@ def sso_subject(**overrides: object) -> ExternalSsoSubject:
     return ExternalSsoSubject(make_auth(TokenType.OAUTH_EXTERNAL_SSO, **overrides))
 
 
-def make_app(*, app_id: str = APP_ID, tenant_id: str = TENANT_ID, enable_api: bool = True) -> App:
+def make_app(
+    *, app_id: str = APP_ID, tenant_id: str = TENANT_ID, enable_api: bool = True, mode: AppMode = AppMode.CHAT
+) -> App:
     return App(
         id=app_id,
         tenant_id=tenant_id,
         name="OpenAPI app",
         description="",
-        mode=AppMode.CHAT,
+        mode=mode,
         icon_type=IconType.EMOJI,
         icon="robot",
         icon_background="#FFFFFF",
@@ -112,6 +115,7 @@ def system_features(
     webapp_auth: bool = False,
 ) -> SystemFeatureModel:
     return SystemFeatureModel(
+        agent_tracing_api_collection_enabled=False,
         deployment_edition=DeploymentEdition.ENTERPRISE,
         license=LicenseStatusModel(status=license_status),
         webapp_auth=WebAppAuthModel(enabled=webapp_auth),

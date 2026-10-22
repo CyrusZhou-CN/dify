@@ -21,11 +21,14 @@ from dify_agent.runtime_backend.profile import (
 
 @pytest.fixture(autouse=True)
 def _isolated_backend_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # RuntimeBackendSettings reads the process environment, so a developer's
-    # exported DIFY_AGENT_* / E2B_* values must not leak into these tests.
+    # RuntimeBackendSettings reads both the process environment and a dotenv file
+    # resolved against the current directory, so neither a developer's exported
+    # DIFY_AGENT_* / E2B_* values nor their local dify-agent/.env may leak in.
+    # Every case here states the settings it exercises.
     for name in list(os.environ):
         if name.startswith("DIFY_AGENT_") or name in ("E2B_API_KEY", "E2B_API_TOKEN"):
             monkeypatch.delenv(name)
+    monkeypatch.setitem(RuntimeBackendSettings.model_config, "env_file", None)
 
 
 def test_e2b_backend_uses_prepared_dify_template_and_one_hour_lease_by_default() -> None:
@@ -60,6 +63,7 @@ def test_local_backend_uses_root_workspace_directory_by_default() -> None:
     settings = RuntimeBackendSettings(
         runtime_backend="local",
         local_sandbox_endpoint="http://shellctl.example",
+        local_sandbox_auth_token="secret",
     )
 
     profile = create_runtime_backend_profile(settings)
@@ -73,6 +77,7 @@ def test_local_backend_passes_configured_roots_to_drivers() -> None:
     settings = RuntimeBackendSettings(
         runtime_backend="local",
         local_sandbox_endpoint="http://shellctl.example",
+        local_sandbox_auth_token=" secret ",
         local_sandbox_materialized_home_root="/tmp/dify/homes",
         local_sandbox_workspace_root="/tmp/dify/workspaces",
         local_sandbox_home_snapshot_root="/tmp/dify/snapshots",
@@ -86,6 +91,8 @@ def test_local_backend_passes_configured_roots_to_drivers() -> None:
     assert profile.execution_bindings.workspace_root == "/tmp/dify/workspaces"
     assert profile.execution_bindings.snapshot_root == "/tmp/dify/snapshots"
     assert profile.home_snapshots.snapshot_root == "/tmp/dify/snapshots"
+    assert profile.home_snapshots.auth_token == " secret "
+    assert profile.execution_bindings.auth_token == " secret "
 
 
 def test_local_backend_rejects_relative_roots() -> None:
@@ -93,8 +100,31 @@ def test_local_backend_rejects_relative_roots() -> None:
         _ = RuntimeBackendSettings(
             runtime_backend="local",
             local_sandbox_endpoint="http://shellctl.example",
+            local_sandbox_auth_token="secret",
             local_sandbox_workspace_root="relative/workspaces",
         )
+
+
+@pytest.mark.parametrize("token", [None, "", " \t\n"])
+def test_local_backend_requires_nonblank_auth_token(token: str | None) -> None:
+    with pytest.raises(ValidationError, match="local_sandbox_auth_token is required"):
+        _ = RuntimeBackendSettings(
+            runtime_backend="local",
+            local_sandbox_endpoint="http://shellctl.example",
+            local_sandbox_auth_token=token,
+        )
+
+
+@pytest.mark.parametrize("prefix", ["DIFY_AGENT_LOCAL_SANDBOX", "DIFY_AGENT_SHELLCTL"])
+def test_local_backend_reads_token_aliases(monkeypatch: pytest.MonkeyPatch, prefix: str) -> None:
+    endpoint_name = f"{prefix}_ENDPOINT" if prefix == "DIFY_AGENT_LOCAL_SANDBOX" else f"{prefix}_ENTRYPOINT"
+    monkeypatch.setenv(endpoint_name, "http://shellctl.example")
+    monkeypatch.setenv(f"{prefix}_AUTH_TOKEN", "secret")
+
+    profile = create_runtime_backend_profile(RuntimeBackendSettings())
+
+    assert isinstance(profile.execution_bindings, LocalExecutionBindingBackend)
+    assert profile.execution_bindings.auth_token == "secret"
 
 
 _OPENSHELL_DRIVER_CONFIG = (

@@ -8,7 +8,11 @@ import type {
   WorkflowFinishedResponse,
 } from '@/types/workflow'
 import { produce } from 'immer'
-import { enrichSubmittedHumanInputFormData } from '@/app/components/base/chat/chat/answer/human-input-content/submitted-utils'
+import {
+  updateFilledHumanInputForm,
+  updateHumanInputFormTimeout,
+  updatePendingHumanInputForm,
+} from '@/app/components/base/chat/chat/answer/human-input-content/form-state'
 import { getFilesInLogs } from '@/app/components/base/file-uploader/utils'
 import { NodeRunningStatus, WorkflowRunningStatus } from '@/app/components/workflow/types'
 import { sseGet } from '@/service/base'
@@ -134,11 +138,12 @@ const markNodesStopped = (traces?: WorkflowProcess['tracing']) => {
   if (!traces) return
 
   const markTrace = (trace: WorkflowProcess['tracing'][number]) => {
-    if (
-      [NodeRunningStatus.Running, NodeRunningStatus.Waiting].includes(
-        trace.status as NodeRunningStatus,
-      )
-    )
+    const unfinishedStatuses: readonly NodeRunningStatus[] = [
+      NodeRunningStatus.Running,
+      NodeRunningStatus.Waiting,
+    ]
+
+    if (unfinishedStatuses.includes(trace.status as NodeRunningStatus))
       trace.status = NodeRunningStatus.Stopped
 
     trace.details?.forEach((detailGroup) => detailGroup.forEach(markTrace))
@@ -155,10 +160,14 @@ const applyWorkflowFinishedState = (
   error?: string,
 ) => {
   return updateWorkflowProcess(current, (draft) => {
+    const errorStatuses: readonly WorkflowRunningStatus[] = [
+      WorkflowRunningStatus.Stopped,
+      WorkflowRunningStatus.Failed,
+    ]
+
     draft.status = status
     draft.error = error
-    if ([WorkflowRunningStatus.Stopped, WorkflowRunningStatus.Failed].includes(status))
-      markNodesStopped(draft.tracing)
+    if (errorStatuses.includes(status)) markNodesStopped(draft.tracing)
   })
 }
 
@@ -190,15 +199,7 @@ const updateHumanInputRequired = (
   data: NonNullable<WorkflowProcess['humanInputFormDataList']>[number],
 ) => {
   return updateWorkflowProcess(current, (draft) => {
-    if (!draft.humanInputFormDataList) {
-      draft.humanInputFormDataList = [data]
-    } else {
-      const currentFormIndex = draft.humanInputFormDataList.findIndex(
-        (item) => item.node_id === data.node_id,
-      )
-      if (currentFormIndex > -1) draft.humanInputFormDataList[currentFormIndex] = data
-      else draft.humanInputFormDataList.push(data)
-    }
+    updatePendingHumanInputForm(draft, data)
 
     const currentIndex = draft.tracing.findIndex((item) => item.node_id === data.node_id)
     if (currentIndex > -1) draft.tracing[currentIndex]!.status = NodeRunningStatus.Paused
@@ -210,20 +211,7 @@ const updateHumanInputFilled = (
   data: NonNullable<WorkflowProcess['humanInputFilledFormDataList']>[number],
 ) => {
   return updateWorkflowProcess(current, (draft) => {
-    let requiredFormData: NonNullable<WorkflowProcess['humanInputFormDataList']>[number] | undefined
-    if (draft.humanInputFormDataList?.length) {
-      const currentFormIndex = draft.humanInputFormDataList.findIndex(
-        (item) => item.node_id === data.node_id,
-      )
-      if (currentFormIndex > -1) {
-        requiredFormData = draft.humanInputFormDataList[currentFormIndex]
-        draft.humanInputFormDataList.splice(currentFormIndex, 1)
-      }
-    }
-
-    const enrichedData = enrichSubmittedHumanInputFormData(data, requiredFormData)
-    if (!draft.humanInputFilledFormDataList) draft.humanInputFilledFormDataList = [enrichedData]
-    else draft.humanInputFilledFormDataList.push(enrichedData)
+    updateFilledHumanInputForm(draft, data)
   })
 }
 
@@ -232,13 +220,7 @@ const updateHumanInputTimeout = (
   data: HumanInputFormTimeoutData,
 ) => {
   return updateWorkflowProcess(current, (draft) => {
-    if (!draft.humanInputFormDataList?.length) return
-
-    const currentFormIndex = draft.humanInputFormDataList.findIndex(
-      (item) => item.node_id === data.node_id,
-    )
-    if (currentFormIndex > -1)
-      draft.humanInputFormDataList[currentFormIndex]!.expiration_time = data.expiration_time
+    updateHumanInputFormTimeout(draft, data)
   })
 }
 
@@ -441,11 +423,9 @@ export {
   appendParallelStart,
   appendResultText,
   applyWorkflowFinishedState,
-  applyWorkflowOutputs,
   applyWorkflowPaused,
   finishParallelTrace,
   finishWorkflowNode,
-  markNodesStopped,
   replaceResultText,
   updateHumanInputFilled,
   updateHumanInputRequired,

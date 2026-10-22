@@ -12,13 +12,23 @@ from sqlalchemy.orm import Session, sessionmaker
 from core.app.app_config.entities import AppAdditionalFeatures, WorkflowUIBasedAppConfig
 from core.app.apps.exc import GenerateTaskStoppedError
 from core.app.apps.workflow import app_generator as app_generator_module
-from core.app.apps.workflow.app_generator import SKIP_PREPARE_USER_INPUTS_KEY, WorkflowAppGenerator
+from core.app.apps.workflow.app_generator import WorkflowAppGenerator
 from core.app.entities.app_invoke_entities import InvokeFrom, WorkflowAppGenerateEntity
-from core.ops.ops_trace_manager import TraceQueueManager
+from core.ops.ops_trace_manager import OpsTraceManager, TraceQueueManager
 from models.enums import EndUserType
 from models.model import App, AppMode, EndUser
 from models.snippet import CustomizedSnippet
 from models.workflow import Workflow, WorkflowKind, WorkflowType
+from services.workflow_run_agg import WorkflowRunAgg
+
+
+@pytest.fixture(autouse=True)
+def disable_trace_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Construct real trace managers without provider lookup or background delivery."""
+    monkeypatch.setattr(OpsTraceManager, "get_ops_trace_instance", lambda app_id: None)
+    monkeypatch.setattr(TraceQueueManager, "start_timer", lambda self: None)
+    monkeypatch.setattr("core.telemetry.gateway.is_enterprise_telemetry_enabled", lambda: False)
+
 
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
 OTHER_TENANT_ID = "00000000-0000-0000-0000-000000000002"
@@ -153,7 +163,7 @@ class TestWorkflowAppGeneratorValidation:
     def test_generate_stream_joins_worker_after_response_exhaustion(
         self, monkeypatch: pytest.MonkeyPatch, sqlite_session: Session
     ):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
         app = _persist_app(sqlite_session)
         workflow = _persist_workflow(sqlite_session)
         user = _persist_end_user(sqlite_session)
@@ -264,14 +274,8 @@ class TestWorkflowAppGeneratorValidation:
         assert result is injected_workflow
         ensure_start_node.assert_called_once_with(workflow, snippet)
 
-    def test_should_prepare_user_inputs(self):
-        generator = WorkflowAppGenerator()
-
-        assert generator._should_prepare_user_inputs({}) is True
-        assert generator._should_prepare_user_inputs({SKIP_PREPARE_USER_INPUTS_KEY: True}) is False
-
     def test_single_iteration_generate_validates_args(self, sqlite_session: Session):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
 
         with pytest.raises(ValueError, match="node_id is required"):
             generator.single_iteration_generate(
@@ -296,7 +300,7 @@ class TestWorkflowAppGeneratorValidation:
             )
 
     def test_single_loop_generate_validates_args(self, sqlite_session: Session):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
 
         with pytest.raises(ValueError, match="node_id is required"):
             generator.single_loop_generate(
@@ -315,7 +319,7 @@ class TestWorkflowAppGeneratorValidation:
         monkeypatch: pytest.MonkeyPatch,
         sqlite_session: Session,
     ):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
         app = _persist_app(sqlite_session)
         workflow = _persist_workflow(sqlite_session)
         user = _persist_end_user(sqlite_session)
@@ -375,7 +379,7 @@ class TestWorkflowAppGeneratorValidation:
         monkeypatch: pytest.MonkeyPatch,
         sqlite_session: Session,
     ):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
         app = _persist_app(sqlite_session)
         workflow = _persist_workflow(sqlite_session)
         user = _persist_end_user(sqlite_session)
@@ -443,7 +447,7 @@ class TestWorkflowAppGeneratorValidation:
 
 class TestWorkflowAppGeneratorHandleResponse:
     def test_handle_response_closed_file_raises_stopped(self, monkeypatch: pytest.MonkeyPatch):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
 
         app_config = WorkflowUIBasedAppConfig(
             tenant_id="tenant",
@@ -491,84 +495,99 @@ class TestWorkflowAppGeneratorHandleResponse:
 
 
 class TestWorkflowAppGeneratorGenerate:
-    @pytest.mark.usefixtures("sqlite_generator_session")
-    def test_generate_skips_prepare_inputs_when_flag_set(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        sqlite_session: Session,
-    ):
-        generator = WorkflowAppGenerator()
-        app = _persist_app(sqlite_session)
-        workflow = _persist_workflow(sqlite_session)
-        user = _persist_end_user(sqlite_session)
+    @pytest.fixture
+    def generation(self, monkeypatch: pytest.MonkeyPatch, sqlite_generator_session: Session):
+        """Keep input preparation real and stop at the execution boundary."""
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
+        app = _persist_app(sqlite_generator_session)
+        workflow = _persist_workflow(sqlite_generator_session)
+        user = _persist_end_user(sqlite_generator_session)
+        execute = Mock(return_value={"ok": True})
+        monkeypatch.setattr(generator, "_generate", execute)
+        return generator, app, workflow, user, execute
 
-        app_config = WorkflowUIBasedAppConfig(
-            tenant_id=TENANT_ID,
-            app_id=APP_ID,
-            app_mode=AppMode.WORKFLOW,
-            additional_features=AppAdditionalFeatures(),
-            variables=[],
-            workflow_id=WORKFLOW_ID,
-        )
-        repository_session_makers: list[sessionmaker[Session]] = []
-
-        monkeypatch.setattr(
-            "core.app.apps.workflow.app_generator.WorkflowAppConfigManager.get_app_config",
-            lambda app_model, workflow: app_config,
-        )
-        monkeypatch.setattr(
-            "core.app.apps.workflow.app_generator.FileUploadConfigManager.convert",
-            lambda features_dict, is_vision=False: None,
-        )
-        monkeypatch.setattr(
-            "core.app.apps.workflow.app_generator.file_factory.build_from_mappings",
-            lambda **kwargs: [],
-        )
-        DummyTraceQueueManager = type(
-            "_DummyTraceQueueManager",
-            (TraceQueueManager,),
+    @pytest.mark.parametrize("node_type", ["trigger-webhook", "trigger-schedule", "trigger-plugin"])
+    @pytest.mark.parametrize("root_node_id", [None, "selected-trigger"])
+    @pytest.mark.parametrize("invoke_from", [InvokeFrom.SERVICE_API, InvokeFrom.DEBUGGER])
+    def test_generate_preserves_trigger_inputs(self, generation, node_type, root_node_id, invoke_from):
+        generator, app, workflow, user, execute = generation
+        workflow.graph = json.dumps(
             {
-                "__init__": lambda self, app_id=None, user_id=None: (
-                    setattr(self, "app_id", app_id) or setattr(self, "user_id", user_id)
-                )
-            },
+                "nodes": [
+                    {"id": "first-trigger", "data": {"type": node_type, "title": "First trigger"}},
+                    {"id": "selected-trigger", "data": {"type": node_type, "title": "Selected trigger"}},
+                ],
+                "edges": [],
+            }
         )
-        monkeypatch.setattr(
-            "core.app.apps.workflow.app_generator.TraceQueueManager",
-            DummyTraceQueueManager,
-        )
-        monkeypatch.setattr(
-            "core.app.apps.workflow.app_generator.DifyCoreRepositoryFactory.create_workflow_execution_repository",
-            lambda **kwargs: repository_session_makers.append(kwargs["session_factory"]) or SimpleNamespace(),
-        )
-        monkeypatch.setattr(
-            "core.app.apps.workflow.app_generator.DifyCoreRepositoryFactory.create_workflow_node_execution_repository",
-            lambda **kwargs: repository_session_makers.append(kwargs["session_factory"]) or SimpleNamespace(),
-        )
-
-        prepare_inputs = pytest.fail
-        monkeypatch.setattr(generator, "_prepare_user_inputs", lambda **kwargs: prepare_inputs())
-
-        monkeypatch.setattr(generator, "_generate", lambda **kwargs: {"ok": True})
+        inputs = {"event": {"message": "hello", "items": [1, 2]}, "enabled": False}
 
         result = generator.generate(
             app_model=app,
             workflow=workflow,
             user=user,
-            args={"inputs": {}, SKIP_PREPARE_USER_INPUTS_KEY: True},
-            invoke_from=InvokeFrom.WEB_APP,
+            args={"inputs": inputs},
+            invoke_from=invoke_from,
             streaming=False,
-            call_depth=0,
+            root_node_id=root_node_id,
         )
 
         assert result == {"ok": True}
-        assert len(repository_session_makers) == 2
-        assert all(factory.kw["bind"] is sqlite_session.get_bind() for factory in repository_session_makers)
+        assert execute.call_args.kwargs["application_generate_entity"].inputs == inputs
+        assert execute.call_args.kwargs["root_node_id"] == (root_node_id or "first-trigger")
+
+    @pytest.mark.parametrize("root_node_id", [None, "start"])
+    def test_generate_prepares_start_inputs(self, generation, root_node_id):
+        generator, app, workflow, user, execute = generation
+        workflow.graph = json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": "start",
+                        "data": {
+                            "type": "start",
+                            "title": "Start",
+                            "variables": [
+                                {"variable": "question", "label": "Question", "type": "text-input", "required": True},
+                                {"variable": "count", "label": "Count", "type": "number", "default": "3"},
+                            ],
+                        },
+                    }
+                ],
+                "edges": [],
+            }
+        )
+
+        generator.generate(
+            app_model=app,
+            workflow=workflow,
+            user=user,
+            args={"inputs": {"question": "hello", "unknown": "filtered"}},
+            invoke_from=InvokeFrom.SERVICE_API,
+            streaming=False,
+            root_node_id=root_node_id,
+        )
+
+        assert execute.call_args.kwargs["application_generate_entity"].inputs == {"question": "hello", "count": 3}
+        assert execute.call_args.kwargs["root_node_id"] == "start"
+
+        execute.reset_mock()
+        with pytest.raises(ValueError, match="question is required in input form"):
+            generator.generate(
+                app_model=app,
+                workflow=workflow,
+                user=user,
+                args={"inputs": {}},
+                invoke_from=InvokeFrom.SERVICE_API,
+                streaming=False,
+                root_node_id=root_node_id,
+            )
+        execute.assert_not_called()
 
 
 class TestWorkflowAppGeneratorResume:
     def test_resume_restores_trace_manager_when_missing(self, monkeypatch: pytest.MonkeyPatch):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
         app_config = WorkflowUIBasedAppConfig(
             tenant_id="tenant",
             app_id="app",
@@ -590,7 +609,7 @@ class TestWorkflowAppGeneratorResume:
             workflow_execution_id="run-id",
             call_depth=0,
         )
-        DummyTraceQueueManager = type(
+        dummy_trace_queue_manager = type(
             "_DummyTraceQueueManager",
             (TraceQueueManager,),
             {
@@ -601,7 +620,7 @@ class TestWorkflowAppGeneratorResume:
         )
         monkeypatch.setattr(
             "core.app.apps.workflow.app_generator.TraceQueueManager",
-            DummyTraceQueueManager,
+            dummy_trace_queue_manager,
         )
         captured_entity: WorkflowAppGenerateEntity | None = None
 
@@ -625,12 +644,12 @@ class TestWorkflowAppGeneratorResume:
         assert result.ok is True
         assert captured_entity is not None
         trace_manager = captured_entity.trace_manager
-        assert isinstance(trace_manager, DummyTraceQueueManager)
+        assert isinstance(trace_manager, dummy_trace_queue_manager)
         assert trace_manager.app_id == APP_ID
         assert trace_manager.user_id == "session-id"
 
     def test_resume_preserves_existing_trace_manager(self, monkeypatch: pytest.MonkeyPatch):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
         app_config = WorkflowUIBasedAppConfig(
             tenant_id="tenant",
             app_id="app",
@@ -683,7 +702,7 @@ class TestWorkflowAppGeneratorWorker:
         monkeypatch: pytest.MonkeyPatch,
         sqlite_session: Session,
     ):
-        generator = WorkflowAppGenerator()
+        generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
         _persist_app(sqlite_session)
         _persist_workflow(sqlite_session)
         _persist_end_user(sqlite_session)
@@ -694,7 +713,7 @@ class TestWorkflowAppGeneratorWorker:
             def __init__(self, **kwargs):
                 runner_kwargs.update(kwargs)
 
-            def run(self):
+            def prepare(self):
                 return None
 
         monkeypatch.setattr(

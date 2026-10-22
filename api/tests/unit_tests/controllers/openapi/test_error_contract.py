@@ -2,7 +2,7 @@
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -18,6 +18,7 @@ from werkzeug.exceptions import (
     UnprocessableEntity,
 )
 
+from constants.oauth_bearer import TokenType
 from controllers.common.errors import (
     BlockedFileExtensionError,
     FileTooLargeError,
@@ -25,7 +26,10 @@ from controllers.common.errors import (
     TooManyFilesError,
     UnsupportedFileTypeError,
 )
+from controllers.openapi._catalog import CATALOG_HEADER, catalog_for
 from controllers.openapi._errors import (
+    CatalogStale,
+    DslInvalid,
     ErrorBody,
     ErrorDetail,
     FilenameNotExists,
@@ -37,6 +41,7 @@ from controllers.openapi._errors import (
     OpenApiErrorFormatter,
     RecipientSurfaceMismatch,
 )
+from controllers.openapi._models import Hint
 from controllers.service_api.app.error import (
     AgentNotPublishedError,
     AppUnavailableError,
@@ -47,8 +52,9 @@ from controllers.service_api.app.error import (
     ProviderQuotaExceededError,
 )
 from controllers.web.error import InvokeRateLimitError as InvokeRateLimitHttpError
-from libs.oauth_bearer import AuthContext, TokenType
+from libs.oauth_bearer import AuthContext
 from models.account import Account, AccountStatus
+from services.oauth_device_contracts import ExpiredTokenError
 
 
 @pytest.fixture
@@ -226,7 +232,8 @@ class TestWireContract:
         monkeypatch.setattr("controllers.openapi.auth.pipelines._mount_flask_login", lambda _user: None)
 
         resp = openapi_app.test_client().get(
-            "/openapi/v1/account/sessions?page=0", headers={"Authorization": "Bearer dfoa_wire"}
+            "/openapi/v1/account/sessions?page=0",
+            headers={"Authorization": "Bearer dfoa_wire", CATALOG_HEADER: catalog_for(openapi_app)[1]},
         )
 
         assert resp.status_code == 422, resp.get_json()
@@ -258,12 +265,9 @@ class TestWireContract:
         # not intercepted → Flask's default HTML 404, not the canonical JSON body
         assert "application/json" not in (resp.content_type or "")
 
-    @patch("controllers.openapi.oauth_device.DeviceFlowRedis")
-    def test_oauth_device_token_keeps_rfc8628_shape(self, mock_redis_cls, openapi_app):
-        store = MagicMock()
-        mock_redis_cls.return_value = store
-        store.record_poll.return_value = None  # not SlowDownDecision.SLOW_DOWN
-        store.load_by_device_code.return_value = None  # unknown code → expired_token
+    @patch("controllers.openapi.oauth_device.application_services")
+    def test_oauth_device_token_keeps_rfc8628_shape(self, mock_application_services, openapi_app):
+        mock_application_services.return_value.oauth_device.poll.side_effect = ExpiredTokenError
 
         client = openapi_app.test_client()
 
@@ -305,6 +309,7 @@ ERROR_MATRIX = [
     (MemberLicenseExceeded(), 403, "member_license_exceeded"),
     (HumanInputFormNotFound(), 404, "form_not_found"),
     (RecipientSurfaceMismatch(), 403, "recipient_surface_mismatch"),
+    (CatalogStale(), 412, "catalog_stale"),
 ]
 
 
@@ -335,3 +340,21 @@ class TestErrorCodeEnumRegistration:
         schema = model.__schema__
         assert schema["type"] == "string"
         assert set(schema["enum"]) == {member.value for member in OpenApiErrorCode}
+
+
+def test_error_body_carries_hints() -> None:
+    hint = Hint(summary="Check the DSL", op="check.console_app.dsl", input={})
+    error = DslInvalid(hints=[hint])
+    assert error.hints == [hint]
+    body = ErrorBody(code="dsl_invalid", message="m", status=422, hints=[hint])
+    assert body.model_dump(exclude_none=True)["hints"][0]["op"] == "check.console_app.dsl"
+
+
+def test_formatter_emits_hints_only_from_openapi_errors() -> None:
+    hint = Hint(summary="Check the DSL", op="check.console_app.dsl", input={"yaml_content": None})
+    wire = OpenApiErrorFormatter().finalize(DslInvalid(hints=[hint]), {}, 422)
+    assert (wire["code"], wire["hints"]) == ("dsl_invalid", [hint.model_dump(mode="json", exclude_none=True)])
+
+    foreign = BadRequest()
+    foreign.hints = [hint]  # type: ignore[attr-defined]
+    assert "hints" not in OpenApiErrorFormatter().finalize(foreign, {}, 400)

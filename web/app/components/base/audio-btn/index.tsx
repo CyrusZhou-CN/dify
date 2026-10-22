@@ -48,18 +48,20 @@ export function AudioBtn({ id, voice, value, className, isAudition }: AudioBtnPr
   if (params.token) {
     url = '/text-to-audio'
     isPublic = true
+  } else if (params.agentId) {
+    url = `/agent/${params.agentId}/text-to-audio`
   } else if (params.appId) {
     if (isInstalledAppPath(pathname)) url = `/installed-apps/${params.appId}/text-to-audio`
     else url = `/apps/${params.appId}/text-to-audio`
   }
   const handleToggle = () => {
     if (audioState === 'playing' || audioState === 'loading') {
-      setTimeout(() => setAudioState('paused'), 1)
+      setAudioState('paused')
       AudioPlayerManager.getInstance()
         .getAudioPlayer(url, isPublic, id, value, voice, handleAudioEvent)
         .pauseAudio()
     } else {
-      setTimeout(() => setAudioState('loading'), 1)
+      setAudioState('loading')
       AudioPlayerManager.getInstance()
         .getAudioPlayer(url, isPublic, id, value, voice, handleAudioEvent)
         .playAudio()
