@@ -161,6 +161,13 @@ export const zHumanInputFormPreviewSubmitPayload = z.object({
 export const zHumanInputFormSubmitResponse = z.record(z.string(), z.unknown())
 
 /**
+ * MessageTemplateTestResponse
+ *
+ * Response body returned after one message-template test send.
+ */
+export const zMessageTemplateTestResponse = z.record(z.string(), z.unknown())
+
+/**
  * IterationNodeRunPayload
  */
 export const zIterationNodeRunPayload = z.object({
@@ -226,6 +233,13 @@ export const zAgentNotFoundError = zErrorResponse.and(
  */
 export const zAgentConfigFileUploadPayload = z.object({
   upload_file_id: z.string(),
+})
+
+/**
+ * AgentConfigFilesUploadPayload
+ */
+export const zAgentConfigFilesUploadPayload = z.object({
+  upload_file_ids: z.array(z.uuid()).min(1),
 })
 
 /**
@@ -297,6 +311,18 @@ export const zAnnotationJobStatusDetailResponse = z.object({
 export const zAnnotationSettingUpdatePayload = z.object({
   score_threshold: z.number(),
 })
+
+/**
+ * BadRequestError
+ *
+ * annotation_ids are required if the parameter is provided.
+ */
+export const zBadRequestError = zErrorResponse.and(
+  z.object({
+    code: z.literal('bad_request'),
+    status: z.literal(400),
+  }),
+)
 
 /**
  * CreateAnnotationPayload
@@ -536,6 +562,18 @@ export const zUnsupportedAudioTypeError = zErrorResponse.and(
 )
 
 /**
+ * ConversationNotFoundError
+ *
+ * The conversation was not found for this user and app.
+ */
+export const zConversationNotFoundError = zErrorResponse.and(
+  z.object({
+    code: z.literal('conversation_not_found'),
+    status: z.literal(404),
+  }),
+)
+
+/**
  * SuggestedQuestionsResponse
  */
 export const zSuggestedQuestionsResponse = z.object({
@@ -620,11 +658,95 @@ export const zAppMessageFeedbackPayload = z.object({
 })
 
 /**
+ * MessageFeedbackRatingRequiredError
+ *
+ * A rating is required when there is no existing feedback to remove.
+ */
+export const zMessageFeedbackRatingRequiredError = zErrorResponse.and(
+  z.object({
+    code: z.literal('message_feedback_rating_required'),
+    status: z.literal(400),
+  }),
+)
+
+/**
  * AppNamePayload
  */
 export const zAppNamePayload = z.object({
   name: z.string().min(1),
 })
+
+/**
+ * NetworkAccessUnsupportedAppModeError
+ *
+ * Network access control is not supported for this app mode.
+ */
+export const zNetworkAccessUnsupportedAppModeError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_unsupported_app_mode'),
+    status: z.literal(400),
+  }),
+)
+
+/**
+ * NetworkAccessForbiddenError
+ *
+ * Network access groups are not available for this workspace.
+ */
+export const zNetworkAccessForbiddenError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_forbidden'),
+    status: z.literal(403),
+  }),
+)
+
+/**
+ * NetworkAccessNotEntitledError
+ *
+ * Network access groups are not available for this workspace.
+ */
+export const zNetworkAccessNotEntitledError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_not_entitled'),
+    status: z.literal(403),
+  }),
+)
+
+/**
+ * NetworkAccessRoleDeniedError
+ *
+ * Your workspace role does not allow this network access operation.
+ */
+export const zNetworkAccessRoleDeniedError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_role_denied'),
+    status: z.literal(403),
+  }),
+)
+
+/**
+ * BillingOperationFailedError
+ *
+ * We couldn't complete this request. Please try again. If the problem persists, contact support.
+ */
+export const zBillingOperationFailedError = zErrorResponse.and(
+  z.object({
+    code: z.literal('billing_operation_failed'),
+    status: z.literal(502),
+  }),
+)
+
+/**
+ * BillingUnavailableError
+ *
+ * This operation is temporarily unavailable. Please try again later.
+ */
+export const zBillingUnavailableError = zErrorResponse.and(
+  z.object({
+    code: z.literal('billing_unavailable'),
+    status: z.literal(503),
+  }),
+)
 
 /**
  * AppNetworkAccessGroupUpdatePayload
@@ -635,6 +757,66 @@ export const zAppNetworkAccessGroupUpdatePayload = z.object({
   expected_version: z.int().gte(0),
   group_id: z.uuid().nullable(),
 })
+
+/**
+ * NetworkAccessInvalidInputError
+ *
+ * Invalid network access group request.
+ */
+export const zNetworkAccessInvalidInputError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_invalid_input'),
+    status: z.literal(400),
+  }),
+)
+
+/**
+ * NetworkAccessUnsupportedAccessPointsError
+ *
+ * Some access points are not supported for this app.
+ */
+export const zNetworkAccessUnsupportedAccessPointsError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_unsupported_access_points'),
+    status: z.literal(400),
+  }),
+)
+
+/**
+ * PaidPlanRequiredError
+ *
+ * This feature requires a paid plan.
+ */
+export const zPaidPlanRequiredError = zErrorResponse.and(
+  z.object({
+    code: z.literal('paid_plan_required'),
+    status: z.literal(403),
+  }),
+)
+
+/**
+ * NetworkAccessGroupNotFoundError
+ *
+ * Network access group was not found.
+ */
+export const zNetworkAccessGroupNotFoundError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_group_not_found'),
+    status: z.literal(404),
+  }),
+)
+
+/**
+ * NetworkAccessVersionConflictError
+ *
+ * The network access resource changed. Refresh it and try again.
+ */
+export const zNetworkAccessVersionConflictError = zErrorResponse.and(
+  z.object({
+    code: z.literal('network_access_version_conflict'),
+    status: z.literal(409),
+  }),
+)
 
 /**
  * AppNetworkAccessGroupStatusResponse
@@ -848,6 +1030,7 @@ export const zTraceProviderCapabilitiesResponse = z.object({
  */
 export const zTraceAppConfigResponse = z.object({
   app_id: z.string().nullish(),
+  configured_secrets: z.array(z.string()).nullish(),
   created_at: z.string().nullish(),
   error: z.string().nullish(),
   has_not_configured: z.boolean().nullish(),
@@ -1432,6 +1615,7 @@ export const zApiKeyItem = z.object({
   created_at: z.int().nullish(),
   dataset_ids: z.array(z.string()).optional().default([]),
   id: z.string(),
+  knowledge_space_ids: z.array(z.string()).optional().default([]),
   last_used_at: z.int().nullish(),
   token: z.string(),
   type: z.string(),
@@ -1636,6 +1820,33 @@ export const zRecentAppListResponse = z.object({
   data: z.array(zRecentAppResponse),
 })
 
+/**
+ * DebugChannel
+ *
+ * Delivery selection for editor debugging, resolved to current channel configuration.
+ */
+export const zDebugChannel = z.enum([
+  'ding_talk',
+  'email',
+  'feishu',
+  'lark',
+  'ms_teams',
+  'slack',
+  'we_com',
+])
+
+export const zJsonValue = z.unknown()
+
+/**
+ * MessageTemplateTestRequest
+ *
+ * Request body for sending one message-template test notification.
+ */
+export const zMessageTemplateTestRequest = z.object({
+  channel: zDebugChannel,
+  inputs: z.record(z.string(), zJsonValue).optional(),
+})
+
 export const zShallowJsonValue = z
   .union([
     z.string(),
@@ -1689,6 +1900,14 @@ export const zAgentConfigFileListResponse = z.object({
 export const zAgentConfigFileUploadResponse = z.object({
   config_version: zAgentConfigVersionResponse,
   file: zAgentConfigFileItemResponse,
+})
+
+/**
+ * AgentConfigFilesUploadResponse
+ */
+export const zAgentConfigFilesUploadResponse = z.object({
+  config_version: zAgentConfigVersionResponse,
+  files: z.array(zAgentConfigFileItemResponse),
 })
 
 /**
@@ -2955,6 +3174,32 @@ export const zAppAnnotationReplyDisabledResponse = z.object({
 })
 
 /**
+ * AppEnabledExternalDataToolResponse
+ */
+export const zAppEnabledExternalDataToolResponse = z.object({
+  config: z.record(z.string(), zJsonValue),
+  enabled: z.literal(true),
+  icon: z.string().optional(),
+  icon_background: z.string().optional(),
+  label: z.string().optional(),
+  type: z.string(),
+  variable: z.string(),
+})
+
+/**
+ * AppDisabledExternalDataToolResponse
+ */
+export const zAppDisabledExternalDataToolResponse = z.object({
+  config: z.record(z.string(), zJsonValue).optional(),
+  enabled: z.literal(false),
+  icon: z.string().optional(),
+  icon_background: z.string().optional(),
+  label: z.string().optional(),
+  type: z.string().optional(),
+  variable: z.string().optional(),
+})
+
+/**
  * AppEnabledConfigResponse
  */
 export const zAppEnabledConfigResponse = z.object({
@@ -2967,6 +3212,16 @@ export const zAppEnabledConfigResponse = z.object({
  * Prompt configuration type
  */
 export const zPromptType = z.enum(['advanced', 'simple'])
+
+/**
+ * AppSensitiveWordAvoidanceResponse
+ */
+export const zAppSensitiveWordAvoidanceResponse = z.object({
+  config: z.record(z.string(), zJsonValue).optional(),
+  configs: z.array(zJsonValue).optional(),
+  enabled: z.boolean(),
+  type: z.string().optional(),
+})
 
 /**
  * AppTextToSpeechResponse
@@ -3280,6 +3535,73 @@ export const zFeedback = z.object({
 })
 
 /**
+ * HumanInputFormSubmissionData
+ */
+export const zHumanInputFormSubmissionData = z.object({
+  action_id: z.string(),
+  action_text: z.string(),
+  node_id: z.string(),
+  node_title: z.string(),
+  rendered_content: z.string(),
+  submitted_data: z.record(z.string(), zJsonValue).nullish(),
+})
+
+/**
+ * ExecutionContentType
+ */
+export const zExecutionContentType = z.enum(['human_input'])
+
+/**
+ * KnowledgeFsCitation
+ *
+ * Immutable evidence identity; no signed URLs, tokens or storage keys.
+ */
+export const zKnowledgeFsCitation = z.object({
+  artifact_hash: z.string().min(1).max(255),
+  control_space_id: z.string().length(36),
+  document_asset_id: z.string().min(1).max(512),
+  document_title: z.string().max(2000).nullish(),
+  document_version: z.int().gte(1).nullish(),
+  end_offset: z.int().gte(0).nullish(),
+  id: z.string().regex(/^kfs_[a-f0-9]{32}$/),
+  node_id: z.string().min(1).max(512),
+  page_number: z.int().gte(0).nullish(),
+  parse_artifact_id: z.string().max(512).nullish(),
+  section_path: z.array(z.string()).max(64).optional(),
+  space_name: z.string().min(1).max(120),
+  start_offset: z.int().gte(0).nullish(),
+})
+
+/**
+ * RetrievalSourceMetadata
+ */
+export const zRetrievalSourceMetadata = z.object({
+  content: z.string().nullish(),
+  data_source_type: z.string().nullish(),
+  dataset_id: z.string().nullish(),
+  dataset_name: z.string().nullish(),
+  doc_metadata: z.record(z.string(), z.unknown()).nullish(),
+  document_asset_id: z.string().nullish(),
+  document_id: z.string().nullish(),
+  document_name: z.string().nullish(),
+  document_revision: z.int().nullish(),
+  document_version: z.int().nullish(),
+  files: z.array(z.record(z.string(), z.unknown())).nullish(),
+  hit_count: z.int().nullish(),
+  index_node_hash: z.string().nullish(),
+  knowledge_fs_citation: zKnowledgeFsCitation.nullish(),
+  page: z.int().nullish(),
+  position: z.int().nullish(),
+  retriever_from: z.string().nullish(),
+  score: z.number().nullish(),
+  segment_id: z.string().nullish(),
+  segment_position: z.int().nullish(),
+  summary: z.string().nullish(),
+  title: z.string().nullish(),
+  word_count: z.int().nullish(),
+})
+
+/**
  * MessageDetail
  */
 export const zMessageDetail = z.object({
@@ -3304,6 +3626,7 @@ export const zMessageDetail = z.object({
   parent_message_id: z.string().nullish(),
   provider_response_latency: z.number(),
   query: z.string(),
+  retriever_resources: z.array(zRetrievalSourceMetadata).optional(),
   status: z.string(),
   workflow_run_id: z.string().nullish(),
 })
@@ -3321,11 +3644,6 @@ export const zConversationMessageDetail = z.object({
   model_config: zConversationModelConfig.nullish(),
   status: z.string(),
 })
-
-/**
- * ExecutionContentType
- */
-export const zExecutionContentType = z.enum(['human_input'])
 
 export const zAppConfigJsonValue = z.json().nullable()
 
@@ -3784,7 +4102,7 @@ export const zAgentComposerBindingResponse = z.object({
  *
  * Per-item shape for an ``array``-typed declared output.
  *
- * PRD §OUTPUT 配置框 keeps arrays one level deep on first version; nested arrays
+ * The PRD output configuration section limits arrays to one level; nested arrays
  * are rejected so the runtime type checker and JSON Schema stay easy to reason
  * about. Stage 4 §4.2.
  */
@@ -3937,6 +4255,34 @@ export const zAppAgentPromptResponse = z.object({
 })
 
 /**
+ * AppLegacyGoogleSearchToolResponse
+ */
+export const zAppLegacyGoogleSearchToolResponse = z.object({
+  google_search: z.record(z.string(), zJsonValue),
+})
+
+/**
+ * AppLegacyWebReaderToolResponse
+ */
+export const zAppLegacyWebReaderToolResponse = z.object({
+  web_reader: z.record(z.string(), zJsonValue),
+})
+
+/**
+ * AppLegacyWikipediaToolResponse
+ */
+export const zAppLegacyWikipediaToolResponse = z.object({
+  wikipedia: z.record(z.string(), zJsonValue),
+})
+
+/**
+ * AppLegacyCurrentDatetimeToolResponse
+ */
+export const zAppLegacyCurrentDatetimeToolResponse = z.object({
+  current_datetime: z.record(z.string(), zJsonValue),
+})
+
+/**
  * AppEmbeddingModelResponse
  */
 export const zAppEmbeddingModelResponse = z.object({
@@ -3998,84 +4344,6 @@ export const zAppCompletionPromptConfigResponse = z.object({
 export const zAppRerankingModelResponse = z.object({
   reranking_model_name: z.string().optional(),
   reranking_provider_name: z.string().optional(),
-})
-
-export const zJsonValue = z.unknown()
-
-/**
- * AppEnabledExternalDataToolResponse
- */
-export const zAppEnabledExternalDataToolResponse = z.object({
-  config: z.record(z.string(), zJsonValue),
-  enabled: z.literal(true),
-  icon: z.string().optional(),
-  icon_background: z.string().optional(),
-  label: z.string().optional(),
-  type: z.string(),
-  variable: z.string(),
-})
-
-/**
- * AppDisabledExternalDataToolResponse
- */
-export const zAppDisabledExternalDataToolResponse = z.object({
-  config: z.record(z.string(), zJsonValue).optional(),
-  enabled: z.literal(false),
-  icon: z.string().optional(),
-  icon_background: z.string().optional(),
-  label: z.string().optional(),
-  type: z.string().optional(),
-  variable: z.string().optional(),
-})
-
-/**
- * AppSensitiveWordAvoidanceResponse
- */
-export const zAppSensitiveWordAvoidanceResponse = z.object({
-  config: z.record(z.string(), zJsonValue).optional(),
-  configs: z.array(zJsonValue).optional(),
-  enabled: z.boolean(),
-  type: z.string().optional(),
-})
-
-/**
- * HumanInputFormSubmissionData
- */
-export const zHumanInputFormSubmissionData = z.object({
-  action_id: z.string(),
-  action_text: z.string(),
-  node_id: z.string(),
-  node_title: z.string(),
-  rendered_content: z.string(),
-  submitted_data: z.record(z.string(), zJsonValue).nullish(),
-})
-
-/**
- * AppLegacyGoogleSearchToolResponse
- */
-export const zAppLegacyGoogleSearchToolResponse = z.object({
-  google_search: z.record(z.string(), zJsonValue),
-})
-
-/**
- * AppLegacyWebReaderToolResponse
- */
-export const zAppLegacyWebReaderToolResponse = z.object({
-  web_reader: z.record(z.string(), zJsonValue),
-})
-
-/**
- * AppLegacyWikipediaToolResponse
- */
-export const zAppLegacyWikipediaToolResponse = z.object({
-  wikipedia: z.record(z.string(), zJsonValue),
-})
-
-/**
- * AppLegacyCurrentDatetimeToolResponse
- */
-export const zAppLegacyCurrentDatetimeToolResponse = z.object({
-  current_datetime: z.record(z.string(), zJsonValue),
 })
 
 /**
@@ -4686,6 +4954,23 @@ export const zAgentSoulHumanConfig = z.object({
 })
 
 /**
+ * AgentKnowledgeSpaceConfig
+ *
+ * One read-only Agent Knowledge Base binding, addressed by stable ID or CLI alias.
+ *
+ * The control-space ID is Dify-owned, never the execution-plane space ID.
+ * ``is_missing`` preserves unresolved DSL references for editing; it never
+ * authorizes execution. Names/descriptions are author guidance, not authority.
+ */
+export const zAgentKnowledgeSpaceConfig = z.object({
+  control_space_id: z.string().length(36),
+  description: z.string().max(2000).nullish(),
+  id: z.string().min(1).max(255),
+  is_missing: z.boolean().optional().default(false),
+  name: z.string().min(1).max(120),
+})
+
+/**
  * AgentMemoryArtifactConfig
  */
 export const zAgentMemoryArtifactConfig = z.object({
@@ -4930,9 +5215,11 @@ export const zAgentComposerKnowledgeDatasetCandidateResponse = z.object({
  * AgentComposerKnowledgeSetCandidateResponse
  */
 export const zAgentComposerKnowledgeSetCandidateResponse = z.object({
+  control_space_id: z.string().nullish(),
   datasets: z.array(zAgentComposerKnowledgeDatasetCandidateResponse).optional(),
   description: z.string().nullish(),
   id: z.string(),
+  missing: z.boolean().optional().default(false),
   missing_dataset_ids: z.array(z.string()).optional(),
   name: z.string(),
 })
@@ -5348,6 +5635,7 @@ export const zHumanInputFormDefinition = z.object({
   form_content: z.string(),
   form_id: z.string(),
   form_token: z.string().nullish(),
+  form_version: z.enum(['1', '2']).optional().default('1'),
   inputs: z.array(zFormInputConfig).optional(),
   node_id: z.string(),
   node_title: z.string(),
@@ -5391,6 +5679,7 @@ export const zMessageDetailResponse = z.object({
   parent_message_id: z.string().nullish(),
   provider_response_latency: z.number(),
   query: z.string(),
+  retriever_resources: z.array(zRetrievalSourceMetadata).optional(),
   status: z.string(),
   workflow_run_id: z.string().nullish(),
 })
@@ -5637,7 +5926,7 @@ export const zAgentSoulModelConfig = z.object({
  *
  * File-output content check via a model-based comparison against a benchmark file.
  *
- * Per PRD §OUTPUT 配置框, output check is **file-only** and optional. Stage 4 §4.3.
+ * Per the PRD output configuration section, output checks are **file-only** and optional. Stage 4 §4.3.
  */
 export const zDeclaredOutputCheckConfig = z.object({
   benchmark_file_ref: zAgentFileRefConfig.nullish(),
@@ -5801,6 +6090,7 @@ export const zAgentSoulAppFeaturesConfig = z.object({
   opening_statement: z.string().nullish(),
   retriever_resource: zAgentFeatureToggleConfig.nullish(),
   sensitive_word_avoidance: zAgentSensitiveWordAvoidanceFeatureConfig.nullish(),
+  show_thoughts: zAgentFeatureToggleConfig.nullish(),
   speech_to_text: zAgentFeatureToggleConfig.nullish(),
   suggested_questions: z.array(z.string()).nullish(),
   suggested_questions_after_answer: zAgentSuggestedQuestionsAfterAnswerFeatureConfig.nullish(),
@@ -5962,16 +6252,15 @@ export const zAgentKnowledgeSetConfig = z.object({
 /**
  * AgentSoulKnowledgeConfig
  *
- * Top-level Agent v2 knowledge config.
+ * Agent Knowledge Base and Classic Knowledge Base bindings for an Agent.
  *
- * Agent v2 models knowledge as explicit sets instead of one flat
- * ``datasets`` / ``query_mode`` / ``query_config`` block. An empty ``sets``
- * list means no knowledge layer should be emitted at runtime, while set-name
- * uniqueness stays case-insensitive because runtime selection addresses sets
- * by name.
+ * ``spaces`` use the KnowledgeFS layer and ``sets`` use the Classic Knowledge
+ * Base layer. Both may be configured together; empty knowledge adds no runtime
+ * capability.
  */
 export const zAgentSoulKnowledgeConfig = z.object({
   sets: z.array(zAgentKnowledgeSetConfig).optional(),
+  spaces: z.array(zAgentKnowledgeSpaceConfig).max(10).optional(),
 })
 
 /**
@@ -6041,6 +6330,13 @@ export const zComposerSavePayload = z.object({
   variant: zComposerVariant,
   version_note: z.string().nullish(),
 })
+
+/**
+ * MessageTemplateTestResponse
+ *
+ * Response body returned after one message-template test send.
+ */
+export const zMessageTemplateTestResponseWritable = z.record(z.string(), z.unknown())
 
 /**
  * GeneratedAppResponse
@@ -6510,6 +6806,21 @@ export const zPostAppsByAppIdAdvancedChatWorkflowsDraftHumanInputNodesByNodeIdFo
 export const zPostAppsByAppIdAdvancedChatWorkflowsDraftHumanInputNodesByNodeIdFormRunResponse =
   zHumanInputFormSubmitResponse
 
+export const zPostAppsByAppIdAdvancedChatWorkflowsDraftHumanInputNodesByNodeIdMessageTemplateTestBody =
+  zMessageTemplateTestRequest
+
+export const zPostAppsByAppIdAdvancedChatWorkflowsDraftHumanInputNodesByNodeIdMessageTemplateTestPath =
+  z.object({
+    app_id: z.uuid(),
+    node_id: z.string(),
+  })
+
+/**
+ * Success
+ */
+export const zPostAppsByAppIdAdvancedChatWorkflowsDraftHumanInputNodesByNodeIdMessageTemplateTestResponse =
+  zMessageTemplateTestResponse
+
 export const zPostAppsByAppIdAdvancedChatWorkflowsDraftIterationNodesByNodeIdRunBody =
   zIterationNodeRunPayload
 
@@ -6580,6 +6891,23 @@ export const zPostAppsByAppIdAgentConfigFilesQuery = z.object({
  * Uploaded config file
  */
 export const zPostAppsByAppIdAgentConfigFilesResponse = zAgentConfigFileUploadResponse
+
+export const zPostAppsByAppIdAgentConfigFilesBatchBody = zAgentConfigFilesUploadPayload
+
+export const zPostAppsByAppIdAgentConfigFilesBatchPath = z.object({
+  app_id: z.uuid(),
+})
+
+export const zPostAppsByAppIdAgentConfigFilesBatchQuery = z.object({
+  draft_type: z.enum(['debug_build', 'draft']).optional(),
+  node_id: z.string().optional(),
+  version_id: z.string().optional(),
+})
+
+/**
+ * Bound config files
+ */
+export const zPostAppsByAppIdAgentConfigFilesBatchResponse = zAgentConfigFilesUploadResponse
 
 export const zDeleteAppsByAppIdAgentConfigFilesByNamePath = z.object({
   app_id: z.uuid(),
@@ -6881,7 +7209,7 @@ export const zPostAppsByAppIdAnnotationsBatchImportPath = z.object({
 })
 
 /**
- * Batch import started successfully
+ * Import started, or CSV/subscription validation failed (error_msg)
  */
 export const zPostAppsByAppIdAnnotationsBatchImportResponse = zAnnotationBatchImportResponse
 
@@ -8096,6 +8424,21 @@ export const zPostAppsByAppIdWorkflowsDraftHumanInputNodesByNodeIdFormRunPath = 
  */
 export const zPostAppsByAppIdWorkflowsDraftHumanInputNodesByNodeIdFormRunResponse =
   zHumanInputFormSubmitResponse
+
+export const zPostAppsByAppIdWorkflowsDraftHumanInputNodesByNodeIdMessageTemplateTestBody =
+  zMessageTemplateTestRequest
+
+export const zPostAppsByAppIdWorkflowsDraftHumanInputNodesByNodeIdMessageTemplateTestPath =
+  z.object({
+    app_id: z.uuid(),
+    node_id: z.string(),
+  })
+
+/**
+ * Success
+ */
+export const zPostAppsByAppIdWorkflowsDraftHumanInputNodesByNodeIdMessageTemplateTestResponse =
+  zMessageTemplateTestResponse
 
 export const zPostAppsByAppIdWorkflowsDraftIterationNodesByNodeIdRunBody = zIterationNodeRunPayload
 

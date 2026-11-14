@@ -24,12 +24,14 @@ from dify_agent.layers.execution_context import (
     DifyExecutionContextLayerConfig,
 )
 from dify_agent.layers.knowledge import DifyKnowledgeBaseLayerConfig
+from dify_agent.layers.knowledge_fs import DifyKnowledgeFsLayerConfig
 from dify_agent.layers.output import DifyOutputLayerConfig
 from dify_agent.layers.prompt import Config as PromptConfig
 from dify_agent.layers.runtime import DifyRuntimeLayerConfig
 from dify_agent.layers.shell import DifyShellLayerConfig
 from dify_agent.layers.user_prompt import (
     DifyUserPromptFileConfig,
+    DifyUserPromptImageConfig,
     DifyUserPromptLayerConfig,
 )
 from dify_agent.protocol import (
@@ -53,8 +55,18 @@ DIFY_CONFIG_LAYER_ID = "config"
 DIFY_PLUGIN_TOOLS_LAYER_ID = "tools"
 DIFY_CORE_TOOLS_LAYER_ID = "core_tools"
 DIFY_KNOWLEDGE_BASE_LAYER_ID = "knowledge"
+DIFY_KNOWLEDGE_FS_LAYER_ID = "knowledge_fs"
 DIFY_SHELL_LAYER_ID = "shell"
 type AgentConfigVersionKind = Literal["snapshot", "draft", "build_draft"]
+
+
+def _knowledge_fs_spec(run_input: AgentBackendWorkflowNodeRunInput | AgentBackendAgentAppRunInput) -> RunLayerSpec:
+    if not run_input.include_shell or run_input.knowledge_fs is None:
+        raise ValueError("KnowledgeFS requires shell and a KnowledgeFS binding")
+    return RunLayerSpec(
+        name=DIFY_KNOWLEDGE_FS_LAYER_ID,
+        config=run_input.knowledge_fs.model_dump(mode="json"),
+    )
 
 
 def _markdown_backtick_fence(text: str) -> str:
@@ -184,6 +196,7 @@ class AgentBackendWorkflowNodeRunInput(BaseModel):
     backend_binding_ref: str = Field(min_length=1)
     workflow_node_job_prompt: str
     user_prompt: str
+    user_images: list[DifyUserPromptImageConfig] = Field(default_factory=list)
     agent_soul_prompt: str | None = None
     agent_config_version_kind: AgentConfigVersionKind = "snapshot"
     idempotency_key: str | None = None
@@ -191,6 +204,7 @@ class AgentBackendWorkflowNodeRunInput(BaseModel):
     tools: DifyPluginToolsLayerConfig | None = None
     core_tools: DifyCoreToolsLayerConfig | None = None
     knowledge: DifyKnowledgeBaseLayerConfig | None = None
+    knowledge_fs: DifyKnowledgeFsLayerConfig | None = None
     config_layer_config: DifyConfigLayerConfig | None = None
     include_shell: bool = False
     shell_config: DifyShellLayerConfig | None = None
@@ -212,9 +226,9 @@ class AgentBackendAgentAppRunInput(BaseModel):
     """Inputs to build one Agent App conversation-turn run request.
 
     Unlike the workflow-node input there is no workflow-node-job prompt and no
-    previous-node context: the user prompt is the chat message, and multi-turn
-    continuity comes from ``session_snapshot`` + the history layer keyed by the
-    conversation.
+    previous-node context: the user prompt is the chat message, optionally
+    prefixed with declared app inputs. Multi-turn continuity comes from
+    ``session_snapshot`` + the history layer keyed by the conversation.
     """
 
     model: AgentBackendModelConfig
@@ -229,6 +243,7 @@ class AgentBackendAgentAppRunInput(BaseModel):
     tools: DifyPluginToolsLayerConfig | None = None
     core_tools: DifyCoreToolsLayerConfig | None = None
     knowledge: DifyKnowledgeBaseLayerConfig | None = None
+    knowledge_fs: DifyKnowledgeFsLayerConfig | None = None
     config_layer_config: DifyConfigLayerConfig | None = None
     include_shell: bool = False
     shell_config: DifyShellLayerConfig | None = None
@@ -356,6 +371,8 @@ class AgentBackendRunRequestBuilder:
                 )
             )
 
+        if run_input.knowledge_fs is not None:
+            layers.append(_knowledge_fs_spec(run_input))
         if run_input.knowledge is not None and run_input.knowledge.sets:
             layers.append(
                 RunLayerSpec(
@@ -413,8 +430,14 @@ class AgentBackendRunRequestBuilder:
                     config=(PromptConfig(user=run_input.workflow_node_job_prompt)).model_dump(mode="json"),
                 ),
                 RunLayerSpec(
-                    name=WORKFLOW_USER_PROMPT_LAYER_ID,
-                    config=(PromptConfig(user=run_input.user_prompt)).model_dump(mode="json"),
+                    name="user_prompt" if run_input.user_images else WORKFLOW_USER_PROMPT_LAYER_ID,
+                    config=(
+                        DifyUserPromptLayerConfig(text=run_input.user_prompt, files=run_input.user_images).model_dump(
+                            mode="json"
+                        )
+                        if run_input.user_images
+                        else PromptConfig(user=run_input.user_prompt).model_dump(mode="json")
+                    ),
                 ),
                 RunLayerSpec(
                     name=DIFY_EXECUTION_CONTEXT_LAYER_ID,
@@ -494,6 +517,8 @@ class AgentBackendRunRequestBuilder:
                 )
             )
 
+        if run_input.knowledge_fs is not None:
+            layers.append(_knowledge_fs_spec(run_input))
         if run_input.knowledge is not None and run_input.knowledge.sets:
             layers.append(
                 RunLayerSpec(

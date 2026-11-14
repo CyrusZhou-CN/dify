@@ -47,8 +47,10 @@ from core.app.entities.queue_entities import (
     QueueAgentThoughtEvent,
     QueueLLMChunkEvent,
     QueueMessageEndEvent,
+    QueueRetrieverResourcesEvent,
 )
 from extensions.ext_database import db
+from extensions.tracing import application_tracing_hooks
 from graphon.file import File
 from graphon.model_runtime.entities.llm_entities import LLMResult, LLMResultChunk, LLMResultChunkDelta, LLMUsage
 from graphon.model_runtime.entities.message_entities import (
@@ -69,6 +71,7 @@ from models.agent import AgentConfigVersionKind
 from models.agent_config_entities import AgentSoulConfig
 from models.enums import CreatorUserRole
 from models.model import Message, MessageAgentThought
+from services.agent.knowledge_citations import knowledge_sources_from_tool_part
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +277,7 @@ class _AgentProcessRecorder:
         self._tool_by_index: dict[int, str] = {}
         self._tool_by_call_id: dict[str, str] = {}
         self._open_tool_by_name: dict[str, set[str]] = {}
+        self._knowledge_receipts: set[str] = set()
 
     def handle_stream_event(self, event: AgentBackendStreamInternalEvent) -> None:
         data = event.data
@@ -430,6 +434,16 @@ class _AgentProcessRecorder:
 
     def _record_tool_return_part(self, part: dict[str, Any]) -> None:
         self._close_thinking_segments()
+        sources = []
+        for source in knowledge_sources_from_tool_part(part):
+            citation = source.knowledge_fs_citation
+            if citation and citation.id not in self._knowledge_receipts and len(self._knowledge_receipts) < 200:
+                self._knowledge_receipts.add(citation.id)
+                sources.append(source)
+        if sources:
+            self._queue_manager.publish(
+                QueueRetrieverResourcesEvent(retriever_resources=sources), PublishFrom.APPLICATION_MANAGER
+            )
         tool_call_id = _string_or_none(part.get("tool_call_id"))
         tool_name = _string_or_none(part.get("tool_name"))
         content = part.get("content")
@@ -640,6 +654,7 @@ class AgentAppRunner:
         home_snapshot_id: str | None,
         conversation_id: str,
         query: str,
+        inputs: Mapping[str, Any] | None = None,
         message_id: str,
         model_name: str,
         queue_manager: AppQueueManager,
@@ -669,6 +684,7 @@ class AgentAppRunner:
             backend_binding_ref=stored.backend_binding_ref,
             conversation_id=conversation_id,
             query=query,
+            inputs=inputs or {},
             files=tuple(files or ()),
             image_detail_config=image_detail_config,
             idempotency_key=message_id,
@@ -752,8 +768,6 @@ class AgentAppRunner:
             binding_id=runtime.binding_id,
             snapshot=terminal.session_snapshot,
         )
-        from core.ops.base_trace_instance import application_tracing_hooks
-
         tracing_hooks = application_tracing_hooks()
         if tracing_hooks is not None:
             tracing_hooks.capture_agent_app_terminal(
@@ -803,6 +817,7 @@ class AgentAppRunner:
         backend_binding_ref: str,
         conversation_id: str,
         query: str,
+        inputs: Mapping[str, Any],
         files: tuple[File, ...],
         image_detail_config: ImagePromptMessageContent.DETAIL | None,
         idempotency_key: str,
@@ -818,6 +833,7 @@ class AgentAppRunner:
                 agent_soul=agent_soul,
                 conversation_id=conversation_id,
                 user_query=query,
+                inputs=inputs,
                 files=files,
                 image_detail_config=image_detail_config,
                 idempotency_key=idempotency_key,
@@ -1046,8 +1062,6 @@ class AgentAppRunner:
             # snapshot/usage, but let the original business failure own the root.
             # Check after cleanup so a Stop observed during its wait still wins.
             return
-        from core.ops.base_trace_instance import application_tracing_hooks
-
         tracing_hooks = application_tracing_hooks()
         if tracing_hooks is not None:
             outcome: Literal["succeeded", "failed", "cancelled"]

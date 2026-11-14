@@ -8,6 +8,7 @@ scopes. Workspace and Binding retirement remain API-owned.
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterable, Callable, Mapping
@@ -34,6 +35,8 @@ from dify_agent.layers.output import output_layer as output_module
 from dify_agent.layers.user_prompt import layer as user_prompt_module
 from dify_agent.layers.knowledge import layer as knowledge_module
 from dify_agent.layers.knowledge.client import DifyKnowledgeBaseClientError
+from dify_agent.layers.knowledge_fs import layer as knowledge_fs_module
+from dify_agent.layers.knowledge_fs.history import without_historical_knowledge_evidence
 from dify_agent.protocol.schemas import (
     AgentRunUsage,
     CreateRunRequest,
@@ -50,6 +53,7 @@ from dify_agent.runtime.event_coalescer import (
 )
 from dify_agent.runtime.event_sink import (
     RunEventSink,
+    RunStreamSealedError,
     emit_pydantic_ai_event,
     emit_run_failed,
     emit_run_started,
@@ -143,6 +147,7 @@ class AgentRunRunner:
     application_observability: ApplicationAgentObservability | None
     _terminal_session_snapshot: SessionSnapshot | None
     _terminal_usage: AgentRunUsage | None
+    _knowledge_modules: list[knowledge_fs_module.Capability]
 
     def __init__(
         self,
@@ -178,6 +183,7 @@ class AgentRunRunner:
         self.application_observability = application_observability
         self._terminal_session_snapshot = None
         self._terminal_usage = None
+        self._knowledge_modules = []
 
     @property
     def terminal_session_snapshot(self) -> SessionSnapshot | None:
@@ -204,6 +210,11 @@ class AgentRunRunner:
             try:
                 _ = await emit_run_started(self.sink, run_id=self.run_id)
                 outcome = await self._run_agent()
+            except RunStreamSealedError:
+                # A terminal transition (typically a cancellation accepted by
+                # another process) sealed the stream first; stop without
+                # appending a second terminal event.
+                return
             except BaseException as exc:
                 failure = exc
                 raise
@@ -228,18 +239,26 @@ class AgentRunRunner:
                 usage=self._terminal_usage,
             )
             if finalization.applied:
+                for module in self._knowledge_modules:
+                    await module.publish_investigation(self.services, status="interrupted")
                 raise
             return
 
         if self.is_cancelled():
             return
-        _ = await emit_run_succeeded(
+        finalization = await emit_run_succeeded(
             self.sink,
             run_id=self.run_id,
             output=outcome.output,
             session_snapshot=outcome.session_snapshot,
             usage=outcome.usage,
         )
+        if finalization.applied:
+            answer = (
+                outcome.output if isinstance(outcome.output, str) else json.dumps(outcome.output, ensure_ascii=False)
+            )
+            for module in self._knowledge_modules:
+                await module.publish_investigation(self.services, status="completed", answer=answer)
 
     def _application_execution_context(self) -> DifyExecutionContextLayerConfig | None:
         """Resolve valid correlation even if later model/resource setup fails."""
@@ -276,6 +295,9 @@ class AgentRunRunner:
         try:
             deps = load_modules(self.request, self.services, self.run_id, registry=self.registry)
             modules = create_modules(deps, registry=self.registry)
+            self._knowledge_modules = [
+                module for module in modules.values() if isinstance(module, knowledge_fs_module.Capability)
+            ]
             model_module = modules[DIFY_AGENT_MODEL_LAYER_ID]
             if not isinstance(model_module, llm_module.Capability):
                 raise ValueError("The llm module must provide native model assembly")
@@ -285,6 +307,9 @@ class AgentRunRunner:
             if history is not None and not isinstance(history, history_module.Capability):
                 raise ValueError("The history slot must provide the history module")
             message_history = history.load_messages(deps) if isinstance(history, history_module.Capability) else None
+            if message_history:
+                # Also strip when knowledge was removed from the new Soul.
+                message_history = without_historical_knowledge_evidence(message_history)
             output = modules.get("output")
             if output is not None and not isinstance(output, output_module.Capability):
                 raise ValueError("The output slot must provide the output module")
